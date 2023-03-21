@@ -1,0 +1,12 @@
+{
+    "templates":[
+        {
+            "name": "AFIP flag",
+            "sources": [
+                "https://i.imgur.com/2IwT6f6.png"
+            ],
+            "x": 321,
+            "y": 859
+        }  
+    ]
+}

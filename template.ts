@@ -1,6 +1,6 @@
 import * as utils from './utils';
 import * as cf from './canvasFunctions'
-import { UPDATE_PERIOD_MILLIS, SECONDS_SPENT_BLINKING, AMOUND_OF_BLINKING, ANIMATION_DEFAULT_PERCENTAGE } from './constants';
+import { UPDATE_PERIOD_MILLIS, SECONDS_SPENT_BLINKING, AMOUNT_OF_BLINKING, ANIMATION_DEFAULT_PERCENTAGE } from './constants';
 
 interface TemplateParams {
     name: string | null
@@ -21,8 +21,19 @@ interface NamedUrl {
     url: string
 }
 
+export interface NotificationTypes {
+    key: string
+    message: string
+}
+
+export interface NotificationServer {
+    url: string
+    types: NotificationTypes[]
+}
+
 export interface JsonParams {
     templates: TemplateParams[]
+    notifications: NotificationServer
     whitelist: NamedUrl[]
     blacklist: NamedUrl[]
 }
@@ -40,14 +51,14 @@ export class Template {
     looping: boolean
     priority: number
 
-    mountPoint: Element
+    globalCanvas: HTMLCanvasElement
     imageLoader = new Image()
     canvasElement = document.createElement('canvas')
 
     blinkingPeriodMillis: number
     animationDuration: number;
 
-    constructor(params: TemplateParams, mountPoint: Element, priority: number) {
+    constructor(params: TemplateParams, globalCanvas: HTMLCanvasElement, priority: number) {
         // assign params
         this.name = params.name
         this.sources = params.sources
@@ -60,11 +71,11 @@ export class Template {
         this.startTime = params.startTime || 0
         this.looping = params.looping || this.frameCount > 1
         // assign from arguments
-        this.mountPoint = mountPoint
+        this.globalCanvas = globalCanvas
         this.priority = priority
 
         //calulate from consts
-        let period = SECONDS_SPENT_BLINKING * 1000 / AMOUND_OF_BLINKING;
+        let period = SECONDS_SPENT_BLINKING * 1000 / AMOUNT_OF_BLINKING;
         this.blinkingPeriodMillis = Math.floor(period / UPDATE_PERIOD_MILLIS) * UPDATE_PERIOD_MILLIS
         this.animationDuration = (this.frameCount * this.frameSpeed)
 
@@ -77,7 +88,6 @@ export class Template {
         this.imageLoader.style.height = '1px';
         this.imageLoader.style.opacity = `${Number.MIN_VALUE}`;
         this.imageLoader.style.pointerEvents = 'none';
-        this.imageLoader.crossOrigin = 'Anonymous';
         document.body.appendChild(this.imageLoader) // firefox doesn't seem to load images outside of DOM
 
         // set image loader event listeners
@@ -107,7 +117,14 @@ export class Template {
         let candidateSource = this.sources[0]
         let displayName = this.name ? this.name + ': ' : ''
         console.log(`${displayName}trying to load ${candidateSource}`)
-        this.imageLoader.src = candidateSource
+        GM.xmlHttpRequest({
+            method: 'GET',
+            url: candidateSource,
+            responseType: 'blob',
+            onload: (response) => {
+                this.imageLoader.src = URL.createObjectURL(response.response)
+            }
+        })
     }
 
     getCurrentFrameIndex(currentSeconds: number) {
@@ -128,11 +145,11 @@ export class Template {
         this.canvasElement.setAttribute('priority', this.priority.toString())
 
         // find others and append to correct position
-        let templateElements = this.mountPoint.children;
+        let templateElements = this.globalCanvas.parentElement!.children;
         let templateElementsArray: Array<Element> = Array.from(templateElements).filter(element => element.hasAttribute('priority'));
 
         if (templateElementsArray.length === 0) {
-            this.mountPoint.appendChild(this.canvasElement);
+            this.globalCanvas.parentElement!.appendChild(this.canvasElement);
         } else {
             // add the new template element to the array
             templateElementsArray.push(this.canvasElement);
@@ -142,22 +159,33 @@ export class Template {
             let index = templateElementsArray.findIndex(element => element === this.canvasElement);
             // insert the new template element at the index
             if (index === templateElementsArray.length - 1) {
-                this.mountPoint.appendChild(this.canvasElement);
+                this.globalCanvas.parentElement!.appendChild(this.canvasElement);
             } else {
-                this.mountPoint.insertBefore(this.canvasElement, templateElementsArray[index + 1]);
+                this.globalCanvas.parentElement!.insertBefore(this.canvasElement, templateElementsArray[index + 1]);
             }
         }
     }
 
-    currentFrame: number
-    currentPercentage: number
-    currentRandomness: number;
+    currentFrame: number | undefined
+    currentPercentage: number | undefined
+    currentRandomness: number | undefined
 
     frameStartTime(n: number | null = null) {
-        return (this.startTime + (n || this.currentFrame) * this.frameSpeed) % this.animationDuration
+        return (this.startTime + (n || this.currentFrame || 0) * this.frameSpeed) % this.animationDuration
+    }
+
+    updateStyle() {
+        // for canvas games where the canvas itself has css applied
+        let globalRatio = parseFloat(this.globalCanvas.style.width) / this.globalCanvas.width
+        this.canvasElement.style.width = `${this.frameWidth! * globalRatio}px`
+        this.canvasElement.style.height = `${this.frameHeight! * globalRatio}px`
+        this.canvasElement.style.left = `${this.x * globalRatio}px`
+        this.canvasElement.style.top = `${this.y * globalRatio}px`
     }
 
     update(percentage: number, randomness: number, currentSeconds: number) {
+        this.updateStyle()
+
         // return if the animation is finished
         if (!this.looping && currentSeconds > this.startTime + this.frameSpeed * this.frameCount) {
             return;
@@ -201,12 +229,12 @@ export class Template {
         this.blinking(currentSeconds)
     }
 
-    blinking(currentSeconds) {
+    blinking(currentSeconds: number) {
         // return if no blinking needed
         if (this.frameSpeed === Infinity || this.frameSpeed < 30 || this.frameCount === 1) return;
 
         let frameEndTime = this.frameStartTime() + this.frameSpeed
-        let blinkTime = (currentSeconds % this.animationDuration) + (AMOUND_OF_BLINKING * this.blinkingPeriodMillis / 1000)
+        let blinkTime = (currentSeconds % this.animationDuration) + (AMOUNT_OF_BLINKING * this.blinkingPeriodMillis / 1000)
         if (blinkTime > frameEndTime) {
             let blinkDiff = blinkTime - frameEndTime
             this.canvasElement.style.opacity = Math.floor(blinkDiff / (this.blinkingPeriodMillis / 1000)) % 2 === 0 ? '0' : '1'
@@ -220,6 +248,12 @@ export class Template {
         this.imageLoader = new Image();
         this.canvasElement.parentElement?.removeChild(this.canvasElement)
         this.canvasElement = document.createElement('canvas')
+    }
+
+    async fakeReload(time:number) {
+        this.canvasElement.style.opacity = '0'
+        await utils.sleep(300 + time)
+        this.canvasElement.style.opacity = '1'
     }
 }
 

@@ -1,22 +1,27 @@
-import { ANIMATION_DEFAULT_PERCENTAGE, CACHE_BUST_PERIOD, MAX_TEMPLATES } from './constants';
-import { Template, JsonParams } from './template';
-
-
+import { CACHE_BUST_PERIOD, MAX_TEMPLATES } from './constants';
+import { Template, JsonParams, NotificationServer, NotificationTypes } from './template';
+import { NotificationManager } from './ui/notificationsManager';
+import * as utils from './utils';
 
 export class TemplateManager {
-    alreadyLoaded: Array<string> = new Array<string>();
-    whitelist: Array<string> = new Array<string>();
-    blacklist: Array<string> = new Array<string>();
-    templates: Array<Template> = new Array<Template>();
-    responseDiffs: Array<number> = new Array<number>();
+    alreadyLoaded = new Array<string>();
+    websockets = new Array<WebSocket>();
+    notificationTypes = new Map<string, NotificationTypes[]>();
+    enabledNotifications = new Array<string>();
+    whitelist = new Array<string>();
+    blacklist = new Array<string>();
+    templates = new Array<Template>();
+    responseDiffs = new Array<number>();
 
-    mountPoint: Element;
+    canvasElement: HTMLCanvasElement;
     startingUrl: string;
     randomness = Math.random();
     percentage = 1
+    lastCacheBust = this.getCacheBustString();
+    notificationManager = new NotificationManager();
 
-    constructor(mountPoint: Element, startingUrl: string) {
-        this.mountPoint = mountPoint;
+    constructor(canvasElement: HTMLCanvasElement, startingUrl: string) {
+        this.canvasElement = canvasElement;
         this.startingUrl = startingUrl
         this.loadTemplatesFromJsonURL(startingUrl)
 
@@ -24,13 +29,18 @@ export class TemplateManager {
             if (ev.key.match(/^\d$/)) {
                 let number = parseInt(ev.key) || 1.1
                 this.percentage = 1 / number
-            } else if (ev.key === 'r') {
-                this.randomness = (this.randomness + ANIMATION_DEFAULT_PERCENTAGE + this.percentage) % 1;
             }
+        })
+        GM.getValue(`${window.location.host}_notificationsEnabled`, "[]").then((value) => {
+            this.enabledNotifications = JSON.parse(value)
         })
     }
 
-    loadTemplatesFromJsonURL(url: string | URL) {
+    getCacheBustString() {
+        return Math.floor(Date.now() / CACHE_BUST_PERIOD).toString(36)
+    }
+
+    loadTemplatesFromJsonURL(url: string | URL, minPriority = 0) {
         let _url = new URL(url);
         let uniqueString = `${_url.origin}${_url.pathname}`;
 
@@ -42,7 +52,8 @@ export class TemplateManager {
 
         console.log(`loading template from ${_url}`);
         // do some cache busting
-        _url.searchParams.append("date", Math.floor(Date.now() / CACHE_BUST_PERIOD).toString(36));
+        this.lastCacheBust = this.getCacheBustString()
+        _url.searchParams.append("date", this.lastCacheBust);
 
         GM.xmlHttpRequest({
             method: 'GET',
@@ -72,17 +83,78 @@ export class TemplateManager {
                 if (json.templates) {
                     for (let i = 0; i < json.templates.length; i++) {
                         if (this.templates.length < MAX_TEMPLATES) {
-                            this.templates.push(new Template(json.templates[i], this.mountPoint, this.templates.length));
+                            this.templates.push(new Template(json.templates[i], this.canvasElement, minPriority + this.templates.length));
                         }
                     }
+                }
+                // connect to websocket
+                if (json.notifications) {
+                    this.connectToWebSocket(json.notifications)
                 }
             }
         });
     }
 
-    reload(url: string | URL) {
-        // TODO: implement soft reloading
-        // only json should get updated, templates should only update if actually anything changed
+    connectToWebSocket(server: NotificationServer) {
+        console.log("trying to connect to websocket at ", server.url)
+        let client = new WebSocket(server.url)
+        this.notificationTypes.set(server.url, server.types)
+
+        client.addEventListener('open', (_) => {
+            console.log("successfully connected to ", server.url)
+            this.websockets.push(client);
+        })
+
+        client.addEventListener('message', async (ev) => {
+            console.log("received message from ", server, ev)
+            console.log(await ev.data.text())
+            let key = await ev.data.text()
+            let notification = server.types.find((t) => t.key === key)
+            if (notification && this.enabledNotifications.includes(`${server.url}??${key}`)) {
+                this.notificationManager.newNotification(server.url, notification.message)
+            }
+        })
+
+        client.addEventListener('close', (_) => {
+            utils.removeItem(this.websockets, client)
+            setTimeout(() => {
+                this.connectToWebSocket(server)
+            }, 1000 * 60);
+        });
+
+        client.addEventListener('error', (_) => {
+            client.close();
+        });
+    }
+
+    canReload(): boolean {
+        return this.lastCacheBust !== this.getCacheBustString()
+    }
+
+    reload() {
+        if (!this.canReload()) {
+            // fake a reload
+            for (let i = 0; i < this.templates.length; i++) {
+                this.templates[i].fakeReload(i * 50)
+            }
+            return;
+        }
+
+        // reload the templates
+        // reloading only the json is not possible because it's user input and not uniquely identifiable
+        // so everything is reloaded as if the template manager was just initialized
+        while (this.templates.length) {
+            this.templates.shift()?.destroy()
+        }
+        while (this.websockets.length) {
+            this.websockets.shift()?.close()
+        }
+        this.templates = []
+        this.websockets = []
+        this.alreadyLoaded = []
+        this.whitelist = []
+        this.blacklist = []
+        this.loadTemplatesFromJsonURL(this.startingUrl)
     }
 
     currentSeconds() {
@@ -95,8 +167,9 @@ export class TemplateManager {
         for (let i = 0; i < this.templates.length; i++)
             this.templates[i].update(this.percentage, this.randomness, cs);
         if (this.templates.length < MAX_TEMPLATES) {
-            while (this.whitelist.length > 0) {
-                this.loadTemplatesFromJsonURL(this.whitelist.shift()!)
+            for (let i = 0; i < this.whitelist.length; i++) {
+                // yes this calls all whitelist all the time but the load will cancel if already loaded
+                this.loadTemplatesFromJsonURL(this.whitelist[i], i * MAX_TEMPLATES)
             }
         }
     }

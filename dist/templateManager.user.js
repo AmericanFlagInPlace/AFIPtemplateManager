@@ -1,7 +1,7 @@
 
 // ==UserScript==
 // @name			template-manager
-// @version			0.4.0
+// @version			0.4.2
 // @description		Manages your templates on various canvas games
 // @author			LittleEndu
 // @license			MIT
@@ -16,6 +16,8 @@
 // @match			https://www.twitch.tv/otknetwork/*
 // @match			https://9jjigdr1wlul7fbginbq7h76jg9h3s.ext-twitch.tv/*
 // @namespace		littleendu.xyz
+// @updateURL		https://github.com/osuplace/templateManager/raw/main/dist/templateManager.user.js
+// @downloadURL		https://github.com/osuplace/templateManager/raw/main/dist/templateManager.user.js
 //
 // Created with love using Gorilla
 // ==/UserScript==
@@ -67,6 +69,11 @@
         div.innerHTML = str;
         return div.firstChild;
     }
+    function wrapInHtml(html, str) {
+        let tag = document.createElement(html);
+        tag.innerText = str;
+        return tag;
+    }
     function removeItem(array, item) {
         let index = array.indexOf(item);
         if (index !== -1) {
@@ -108,7 +115,7 @@
     }
 
     class Template {
-        constructor(params, globalCanvas, priority) {
+        constructor(params, contact, globalCanvas, priority) {
             this.imageLoader = new Image();
             this.canvasElement = document.createElement('canvas');
             this.loading = false;
@@ -157,6 +164,32 @@
                 // assume loading from this source fails
                 this.sources.shift();
             });
+            // add contact info container
+            if (contact) {
+                this.contactElement = document.createElement('div');
+                this.contactElement.style.fontWeight = "bold";
+                this.contactElement.style.fontSize = "1px";
+                this.contactElement.style.fontFamily = "serif"; // this fixes firefox
+                this.contactElement.style.color = "#eee";
+                this.contactElement.style.backgroundColor = "#111";
+                this.contactElement.style.padding = "1px";
+                this.contactElement.style.borderRadius = "1px";
+                this.contactElement.style.opacity = "0";
+                this.contactElement.style.transition = "opacity 500ms, width 200ms, height 200ms";
+                this.contactElement.style.position = "absolute";
+                this.contactElement.style.left = `${this.x}px`;
+                this.contactElement.style.top = `${this.y}px`;
+                this.contactElement.style.pointerEvents = "none";
+                this.contactElement.setAttribute('priority', Math.round(Number.MIN_SAFE_INTEGER / 100 + priority).toString());
+                this.contactElement.className = 'iHasContactInfo';
+                if (params.name) {
+                    this.contactElement.appendChild(document.createTextNode(params.name));
+                    this.contactElement.appendChild(document.createElement('br'));
+                    this.contactElement.appendChild(document.createTextNode(`contact: `));
+                }
+                this.contactElement.appendChild(document.createTextNode(contact));
+                globalCanvas.parentElement.appendChild(this.contactElement);
+            }
         }
         tryLoadSource() {
             if (this.loading)
@@ -279,11 +312,13 @@
             }
         }
         destroy() {
-            var _a, _b;
+            var _a, _b, _c, _d;
             (_a = this.imageLoader.parentElement) === null || _a === void 0 ? void 0 : _a.removeChild(this.imageLoader);
             this.imageLoader = new Image();
             (_b = this.canvasElement.parentElement) === null || _b === void 0 ? void 0 : _b.removeChild(this.canvasElement);
             this.canvasElement = document.createElement('canvas');
+            (_d = (_c = this.contactElement) === null || _c === void 0 ? void 0 : _c.parentElement) === null || _d === void 0 ? void 0 : _d.removeChild(this.contactElement);
+            this.contactElement = undefined;
         }
         async fakeReload(time) {
             this.canvasElement.style.opacity = '0';
@@ -302,11 +337,15 @@
             this.container.style.top = '-0.1px';
             this.container.style.right = '0px';
             this.container.style.backgroundColor = 'rgba(255, 255, 255, 0)';
+            this.container.style.pointerEvents = 'none';
+            this.container.style.userSelect = 'none';
             document.body.appendChild(this.container);
         }
         newNotification(url, message) {
             let div = document.createElement('div');
-            div.innerHTML = `${url} says:<br/><b>${message}</b>`;
+            div.appendChild(document.createTextNode(`${url} says:`));
+            div.append(document.createElement('br'));
+            div.append(wrapInHtml('b', message));
             div.style.height = '0px';
             div.style.width = '100%';
             div.style.opacity = '0';
@@ -317,6 +356,7 @@
             div.style.color = '#eee';
             div.style.transition = "height 300ms, opacity 300ms, padding 300ms, margin 300ms";
             div.style.overflow = 'hidden';
+            div.style.pointerEvents = 'auto';
             div.onclick = () => {
                 div.style.opacity = '0';
                 div.style.height = '0px';
@@ -336,6 +376,7 @@
 
     class TemplateManager {
         constructor(canvasElement, startingUrl) {
+            this.templatesToLoad = MAX_TEMPLATES;
             this.alreadyLoaded = new Array();
             this.websockets = new Array();
             this.notificationTypes = new Map();
@@ -403,8 +444,8 @@
                     // read templates
                     if (json.templates) {
                         for (let i = 0; i < json.templates.length; i++) {
-                            if (this.templates.length < MAX_TEMPLATES) {
-                                this.templates.push(new Template(json.templates[i], this.canvasElement, minPriority + this.templates.length));
+                            if (this.templates.length < this.templatesToLoad) {
+                                this.templates.push(new Template(json.templates[i], json.contact || json.contactInfo, this.canvasElement, minPriority + this.templates.length));
                             }
                         }
                     }
@@ -478,26 +519,18 @@
             let cs = this.currentSeconds();
             for (let i = 0; i < this.templates.length; i++)
                 this.templates[i].update(this.percentage, this.randomness, cs);
-            if (this.templates.length < MAX_TEMPLATES) {
+            if (this.templates.length < this.templatesToLoad) {
                 for (let i = 0; i < this.whitelist.length; i++) {
                     // yes this calls all whitelist all the time but the load will cancel if already loaded
-                    this.loadTemplatesFromJsonURL(this.whitelist[i], i * MAX_TEMPLATES);
+                    this.loadTemplatesFromJsonURL(this.whitelist[i], i * this.templatesToLoad);
                 }
             }
         }
-        restart() {
-            while (this.templates.length > 0) {
-                let template = this.templates.shift();
-                template === null || template === void 0 ? void 0 : template.destroy();
-            }
-            this.alreadyLoaded = new Array();
-            this.loadTemplatesFromJsonURL(this.startingUrl);
-        }
     }
 
-    function createButton(innerHtml, callback) {
+    function createButton(text, callback) {
         let button = document.createElement("button");
-        button.innerHTML = innerHtml;
+        button.innerText = text;
         button.onclick = () => callback();
         button.style.color = "#eee";
         button.style.backgroundColor = "#19d";
@@ -505,7 +538,7 @@
         button.style.borderRadius = "5px";
         return button;
     }
-    function createSlider(innerHtml, value, callback) {
+    function createSlider(Text, value, callback) {
         let div = document.createElement("div");
         div.style.backgroundColor = "#057";
         div.style.padding = "5px";
@@ -522,14 +555,14 @@
         };
         slider.style.width = "100%";
         let label = document.createElement("label");
-        label.innerHTML = innerHtml;
+        label.innerText = Text;
         label.style.color = "#eee";
         div.append(label);
         div.appendChild(document.createElement("br"));
         div.append(slider);
         return div;
     }
-    function createCheckbox(innerHtml, checked, callback) {
+    function createBoldCheckbox(boldText, regularText, checked, callback) {
         let div = document.createElement("div");
         div.style.backgroundColor = "#057";
         div.style.padding = "5px";
@@ -542,7 +575,10 @@
             callback(checkbox.checked);
         };
         let label = document.createElement("label");
-        label.innerHTML = innerHtml;
+        let b = document.createElement("b");
+        b.innerText = boldText;
+        label.append(b);
+        label.append(document.createTextNode(regularText));
         label.style.color = "#eee";
         div.append(checkbox);
         div.append(label);
@@ -567,6 +603,7 @@
             this.div.style.pointerEvents = "none";
             this.div.style.zIndex = `${Number.MAX_SAFE_INTEGER}`;
             this.div.style.textAlign = "center";
+            this.div.style.userSelect = "none";
             this.div.onclick = (ev) => {
                 if (ev.target === ev.currentTarget)
                     this.close();
@@ -585,6 +622,10 @@
             this.div.appendChild(document.createElement('br'));
             this.div.appendChild(createButton("Reload the template", () => manager.reload()));
             this.div.appendChild(document.createElement('br'));
+            this.div.appendChild(createSlider("Templates to load", "4", (n) => {
+                manager.templatesToLoad = (n + 1) * MAX_TEMPLATES / 5;
+            }));
+            this.div.appendChild(document.createElement('br'));
             this.div.appendChild(createButton("Generate new randomness", () => {
                 let currentRandomness = manager.randomness;
                 while (true) {
@@ -597,13 +638,21 @@
             this.div.appendChild(createSlider("Dither amount", "1", (n) => {
                 manager.percentage = 1 / (n / 10 + 1);
             }));
+            this.div.appendChild(document.createElement('br'));
+            this.div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
+                document.querySelectorAll('.iHasContactInfo').forEach((i) => {
+                    console.log(i);
+                    i.style.opacity = a ? "1" : "0";
+                });
+            }));
+            this.div.appendChild(document.createElement('br'));
             this.checkboxes.style.backgroundColor = "rgba(0,0,0,0.5)";
             this.checkboxes.style.padding = "8px";
             this.checkboxes.style.borderRadius = "8px";
             this.div.appendChild(this.checkboxes);
             for (let c = 0; c < this.div.children.length; c++) {
                 let child = this.div.children[c];
-                child.style.margin = "1% 40%";
+                child.style.margin = "8px 40%";
             }
         }
         open() {
@@ -641,8 +690,7 @@
                     for (let i = 0; i < notifications.length; i++) {
                         let notification = notifications[i];
                         let enabled = this.manager.enabledNotifications.includes(`${value}??${notification.key}`);
-                        let html = `<b>${notification.key}</b>: ${notification.message}`;
-                        let checkbox = createCheckbox(html, enabled, async (b) => {
+                        let checkbox = createBoldCheckbox(notification.key + " - ", notification.message, enabled, async (b) => {
                             removeItem(this.manager.enabledNotifications, `${value}??${notification.key}`);
                             if (b) {
                                 this.manager.enabledNotifications.push(`${value}??${notification.key}`);
@@ -664,15 +712,15 @@
         let settings = new Settings(manager);
         let xKey = `${window.location.host}_settingsX`;
         let yKey = `${window.location.host}_settingsY`;
-        let x = await GM.getValue(xKey, null) || 10;
-        let y = await GM.getValue(yKey, null) || 10;
+        let GMx = await GM.getValue(xKey, null) || 10;
+        let GMy = await GM.getValue(yKey, null) || 10;
         let iconElement = stringToHtml(SLIDERS_SVG);
         document.body.append(iconElement);
-        let setPosition = async (xx, yy) => {
+        let setPosition = async (mouseX, mouseY) => {
             let xMin = 16 / window.innerWidth * 100;
             let yMin = 16 / window.innerHeight * 100;
-            x = (xx) / window.innerWidth * 100;
-            y = (yy) / window.innerHeight * 100;
+            let x = (mouseX) / window.innerWidth * 100;
+            let y = (mouseY) / window.innerHeight * 100;
             await GM.setValue(xKey, x);
             await GM.setValue(yKey, y);
             if (x < 50) {
@@ -696,7 +744,7 @@
                 iconElement.style.top = 'unset';
             }
         };
-        await setPosition(x / 100 * window.innerWidth, y / 100 * window.innerHeight);
+        await setPosition(GMx / 100 * window.innerWidth, GMy / 100 * window.innerHeight);
         iconElement.style.position = 'absolute';
         iconElement.style.width = "32px";
         iconElement.style.height = "32px";

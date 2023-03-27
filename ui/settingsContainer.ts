@@ -1,9 +1,10 @@
+import { MAX_TEMPLATES } from "../constants";
 import { TemplateManager } from "../templateManager";
 import * as utils from "../utils";
 
-function createButton(innerHtml: string, callback: () => void) {
+function createButton(text: string, callback: () => void) {
     let button = document.createElement("button");
-    button.innerHTML = innerHtml;
+    button.innerText = text;
     button.onclick = () => callback();
     button.style.color = "#eee"
     button.style.backgroundColor = "#19d"
@@ -12,7 +13,7 @@ function createButton(innerHtml: string, callback: () => void) {
     return button;
 }
 
-function createSlider(innerHtml: string, value: string, callback: (n: number) => void) {
+function createSlider(Text: string, value: string, callback: (n: number) => void) {
     let div = document.createElement("div");
     div.style.backgroundColor = "#057"
     div.style.padding = "5px"
@@ -29,7 +30,7 @@ function createSlider(innerHtml: string, value: string, callback: (n: number) =>
     };
     slider.style.width = "100%";
     let label = document.createElement("label");
-    label.innerHTML = innerHtml;
+    label.innerText = Text;
     label.style.color = "#eee"
     div.append(label);
     div.appendChild(document.createElement("br"));
@@ -37,7 +38,7 @@ function createSlider(innerHtml: string, value: string, callback: (n: number) =>
     return div;
 }
 
-function createCheckbox(innerHtml: string, checked: boolean, callback: (a: boolean) => void) {
+function createBoldCheckbox(boldText: string, regularText: string, checked: boolean, callback: (a: boolean) => void) {
     let div = document.createElement("div");
     div.style.backgroundColor = "#057"
     div.style.padding = "5px"
@@ -50,7 +51,10 @@ function createCheckbox(innerHtml: string, checked: boolean, callback: (a: boole
         callback(checkbox.checked)
     }
     let label = document.createElement("label")
-    label.innerHTML = innerHtml
+    let b = document.createElement("b")
+    b.innerText = boldText
+    label.append(b)
+    label.append(document.createTextNode(regularText))
     label.style.color = "#eee"
     div.append(checkbox);
     div.append(label);
@@ -79,6 +83,7 @@ export class Settings {
         this.div.style.pointerEvents = "none"
         this.div.style.zIndex = `${Number.MAX_SAFE_INTEGER}`
         this.div.style.textAlign = "center"
+        this.div.style.userSelect = "none"
         this.div.onclick = (ev) => {
             if (ev.target === ev.currentTarget)
                 this.close();
@@ -98,6 +103,10 @@ export class Settings {
         this.div.appendChild(document.createElement('br'))
         this.div.appendChild(createButton("Reload the template", () => manager.reload()))
         this.div.appendChild(document.createElement('br'))
+        this.div.appendChild(createSlider("Templates to load", "4", (n) => {
+            manager.templatesToLoad = (n + 1) * MAX_TEMPLATES / 5
+        }))
+        this.div.appendChild(document.createElement('br'))
         this.div.appendChild(createButton("Generate new randomness", () => {
             let currentRandomness = manager.randomness;
             while (true) {
@@ -110,16 +119,23 @@ export class Settings {
         this.div.appendChild(createSlider("Dither amount", "1", (n) => {
             manager.percentage = 1 / (n / 10 + 1)
         }))
+        this.div.appendChild(document.createElement('br'))
+        this.div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
+            document.querySelectorAll('.iHasContactInfo').forEach((i) => {
+                console.log(i as HTMLElement);
+                (i as HTMLElement).style.opacity = a ? "1" : "0";
+            })
+        }))
+        this.div.appendChild(document.createElement('br'))
 
         this.checkboxes.style.backgroundColor = "rgba(0,0,0,0.5)"
         this.checkboxes.style.padding = "8px"
         this.checkboxes.style.borderRadius = "8px"
-
         this.div.appendChild(this.checkboxes)
 
         for (let c = 0; c < this.div.children.length; c++) {
             let child = this.div.children[c] as HTMLElement
-            child.style.margin = "1% 40%"
+            child.style.margin = "8px 40%"
         }
     }
 
@@ -160,8 +176,7 @@ export class Settings {
                 for (let i = 0; i < notifications.length; i++) {
                     let notification = notifications[i]
                     let enabled = this.manager.enabledNotifications.includes(`${value}??${notification.key}`)
-                    let html = `<b>${notification.key}</b>: ${notification.message}`
-                    let checkbox = createCheckbox(html, enabled, async (b) => {
+                    let checkbox = createBoldCheckbox(notification.key + " - ", notification.message, enabled, async (b) => {
                         utils.removeItem(this.manager.enabledNotifications, `${value}??${notification.key}`)
                         if (b) {
                             this.manager.enabledNotifications.push(`${value}??${notification.key}`)

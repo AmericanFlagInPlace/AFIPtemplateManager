@@ -1,7 +1,7 @@
 
 // ==UserScript==
 // @name			template-manager
-// @version			0.4.2
+// @version			0.4.4
 // @description		Manages your templates on various canvas games
 // @author			LittleEndu
 // @license			MIT
@@ -25,12 +25,93 @@
 (function () {
     'use strict';
 
+    const css = (x) => x;
     const MAX_TEMPLATES = 100;
     const CACHE_BUST_PERIOD = 1000 * 60 * 2;
     const UPDATE_PERIOD_MILLIS = 100;
     const SECONDS_SPENT_BLINKING = 5;
     const AMOUNT_OF_BLINKING = 11;
     const ANIMATION_DEFAULT_PERCENTAGE = 1 / 3;
+    const NO_JSON_TEMPLATE_IN_PARAMS = "no_json_template";
+    const CONTACT_INFO_CSS = css `
+    div.iHasContactInfo {
+        font-weight: bold;
+        font-size: 1px;
+        font-family: serif; /* this fixes firefox */
+        color: #eee;
+        background-color: #111;
+        padding: 1px;
+        border-radius: 1px;
+        opacity: 0;
+        transition: opacity 500ms, width 200ms, height 200ms;
+        position: absolute;
+        pointer-events: none;
+    }
+`;
+    const SETTINGS_CSS = css `
+    #settingsOverlay {
+        transition: opacity 300ms ease 0s;
+        width: 100vw;
+        height: 100vh;
+        position: absolute;
+        left: -0.1px;
+        top: -0.1px;
+        background-color: rgba(0, 0, 0, 0.25);
+        padding: 0px;
+        margin: 0px;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 2147483647;
+        text-align: center;
+        user-select: none;
+    }
+    #settingsOverlay label {
+        text-shadow: -1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111;
+        color: #eee;
+    }
+    #settingsOverlay input[type=range] {
+        
+    }
+    .settingsWrapper {
+        background-color: rgba(0, 0, 0, 0.5);
+        padding: 8px;
+        border-radius: 8px;
+        border: 1px solid rgba(238, 238, 238, 0.5);
+        margin: 0.5rem 40%
+    }
+    #templateLinksWrapper button,
+    #templateLinksWrapper label {
+        height: auto;
+        word-break: break-all;
+        white-space: normal;
+    }
+    .settingsWrapper:empty {
+        display: none;
+    }
+    .settingsButton {
+        cursor: pointer;
+        display: inline-block;
+        color: rgb(238, 238, 238);
+        background-color: rgba(0, 0, 0, 0.5);
+        padding: 0.25rem 0.5rem;
+        margin: 0.5rem;
+        border-radius: 5px;
+        line-height: 1.1em;
+        border: 1px solid rgba(238, 238, 238, 0.5);
+    }
+    .settingsButton:hover {
+        background-color: rgba(64, 64, 64, 0.5);
+    }
+    .settingsSliderBox, .settingsCheckbox {
+        background-color: rgba(0, 0, 0, 0.5);
+        padding: 0.25rem 0.5rem;
+        border-radius: 5px;
+        margin: 0.5rem;
+    }
+    .templateLink:hover {
+        background-color: rgba(128, 0, 0, 0.5);
+    }
+`;
 
     function run() {
         let reticuleStyleSetter = setInterval(() => {
@@ -79,6 +160,15 @@
         if (index !== -1) {
             array.splice(index, 1);
         }
+    }
+    function findJSONTemplateInParams(urlString) {
+        const urlSearchParams = new URLSearchParams(urlString);
+        const params = Object.fromEntries(urlSearchParams.entries());
+        console.log(params);
+        return params.jsontemplate ? params.jsontemplate : null;
+    }
+    function findJSONTemplateInURL(url) {
+        return findJSONTemplateInParams(url.hash.substring(1)) || findJSONTemplateInParams(url.search.substring(1));
     }
 
     function extractFrame(image, frameWidth, frameHeight, frameIndex) {
@@ -166,21 +256,26 @@
             });
             // add contact info container
             if (contact) {
+                let contactX = Math.round(this.x / 5) * 5;
+                let contactY = Math.round(this.y / 5) * 5;
+                let checkingCoords = true;
+                while (checkingCoords) {
+                    checkingCoords = false;
+                    let contactInfos = globalCanvas.parentElement.querySelectorAll('.iHasContactInfo');
+                    for (let i = 0; i < contactInfos.length; i++) {
+                        let child = contactInfos[i];
+                        if (child && parseInt(child.style.left) === contactX && parseInt(child.style.top) === contactY) {
+                            checkingCoords = true;
+                            contactX += 5;
+                            contactY += 5;
+                        }
+                    }
+                }
                 this.contactElement = document.createElement('div');
-                this.contactElement.style.fontWeight = "bold";
-                this.contactElement.style.fontSize = "1px";
-                this.contactElement.style.fontFamily = "serif"; // this fixes firefox
-                this.contactElement.style.color = "#eee";
-                this.contactElement.style.backgroundColor = "#111";
-                this.contactElement.style.padding = "1px";
-                this.contactElement.style.borderRadius = "1px";
-                this.contactElement.style.opacity = "0";
-                this.contactElement.style.transition = "opacity 500ms, width 200ms, height 200ms";
-                this.contactElement.style.position = "absolute";
-                this.contactElement.style.left = `${this.x}px`;
-                this.contactElement.style.top = `${this.y}px`;
-                this.contactElement.style.pointerEvents = "none";
-                this.contactElement.setAttribute('priority', Math.round(Number.MIN_SAFE_INTEGER / 100 + priority).toString());
+                this.contactElement.style.left = `${contactX}px`;
+                this.contactElement.style.top = `${contactY}px`;
+                let contactPriority = Math.round(Number.MIN_SAFE_INTEGER / 100 + priority);
+                this.contactElement.setAttribute('priority', contactPriority.toString());
                 this.contactElement.className = 'iHasContactInfo';
                 if (params.name) {
                     this.contactElement.appendChild(document.createTextNode(params.name));
@@ -188,7 +283,12 @@
                     this.contactElement.appendChild(document.createTextNode(`contact: `));
                 }
                 this.contactElement.appendChild(document.createTextNode(contact));
-                globalCanvas.parentElement.appendChild(this.contactElement);
+                this.insertPriorityElement(this.contactElement);
+            }
+        }
+        setContactInfoDisplay(enabled) {
+            if (this.contactElement) {
+                this.contactElement.style.opacity = enabled ? "1" : "0";
             }
         }
         tryLoadSource() {
@@ -214,6 +314,24 @@
                 return this.frameCount - 1;
             return negativeSafeModulo(Math.floor((currentSeconds - this.startTime) / this.frameSpeed), this.frameCount);
         }
+        insertPriorityElement(element) {
+            let priorityElements = this.globalCanvas.parentElement.children;
+            let priorityElementsArray = Array.from(priorityElements).filter(el => el.hasAttribute('priority'));
+            if (priorityElementsArray.length === 0) {
+                this.globalCanvas.parentElement.appendChild(element);
+            }
+            else {
+                priorityElementsArray.push(element);
+                priorityElementsArray.sort((a, b) => parseInt(b.getAttribute('priority')) - parseInt(a.getAttribute('priority')));
+                let index = priorityElementsArray.findIndex(el => el === element);
+                if (index === priorityElementsArray.length - 1) {
+                    this.globalCanvas.parentElement.appendChild(element);
+                }
+                else {
+                    this.globalCanvas.parentElement.insertBefore(element, priorityElementsArray[index + 1]);
+                }
+            }
+        }
         initCanvas() {
             this.canvasElement.style.position = 'absolute';
             this.canvasElement.style.top = `${this.y}px`;
@@ -223,27 +341,7 @@
             this.canvasElement.style.pointerEvents = 'none';
             this.canvasElement.style.imageRendering = 'pixelated';
             this.canvasElement.setAttribute('priority', this.priority.toString());
-            // find others and append to correct position
-            let templateElements = this.globalCanvas.parentElement.children;
-            let templateElementsArray = Array.from(templateElements).filter(element => element.hasAttribute('priority'));
-            if (templateElementsArray.length === 0) {
-                this.globalCanvas.parentElement.appendChild(this.canvasElement);
-            }
-            else {
-                // add the new template element to the array
-                templateElementsArray.push(this.canvasElement);
-                // sort the array by priority
-                templateElementsArray.sort((a, b) => parseInt(b.getAttribute('priority')) - parseInt(a.getAttribute('priority')));
-                // find the index of the new template element in the sorted array
-                let index = templateElementsArray.findIndex(element => element === this.canvasElement);
-                // insert the new template element at the index
-                if (index === templateElementsArray.length - 1) {
-                    this.globalCanvas.parentElement.appendChild(this.canvasElement);
-                }
-                else {
-                    this.globalCanvas.parentElement.insertBefore(this.canvasElement, templateElementsArray[index + 1]);
-                }
-            }
+            this.insertPriorityElement(this.canvasElement);
         }
         frameStartTime(n = null) {
             return (this.startTime + (n || this.currentFrame || 0) * this.frameSpeed) % this.animationDuration;
@@ -335,7 +433,7 @@
             this.container.style.position = 'absolute';
             this.container.style.zIndex = '9999';
             this.container.style.top = '-0.1px';
-            this.container.style.right = '0px';
+            this.container.style.right = '10px';
             this.container.style.backgroundColor = 'rgba(255, 255, 255, 0)';
             this.container.style.pointerEvents = 'none';
             this.container.style.userSelect = 'none';
@@ -343,11 +441,10 @@
         }
         newNotification(url, message) {
             let div = document.createElement('div');
-            div.appendChild(document.createTextNode(`${url} says:`));
+            div.appendChild(wrapInHtml('i', `${url} says:`));
             div.append(document.createElement('br'));
             div.append(wrapInHtml('b', message));
             div.style.height = '0px';
-            div.style.width = '100%';
             div.style.opacity = '0';
             div.style.padding = '0px';
             div.style.margin = '0px';
@@ -389,9 +486,10 @@
             this.percentage = 1;
             this.lastCacheBust = this.getCacheBustString();
             this.notificationManager = new NotificationManager();
+            this.notificationSent = false;
             this.canvasElement = canvasElement;
             this.startingUrl = startingUrl;
-            this.loadTemplatesFromJsonURL(startingUrl);
+            this.initOrReloadTemplates(true);
             window.addEventListener('keydown', (ev) => {
                 if (ev.key.match(/^\d$/)) {
                     let number = parseInt(ev.key) || 1.1;
@@ -401,6 +499,9 @@
             GM.getValue(`${window.location.host}_notificationsEnabled`, "[]").then((value) => {
                 this.enabledNotifications = JSON.parse(value);
             });
+            let style = document.createElement('style');
+            style.innerHTML = CONTACT_INFO_CSS;
+            canvasElement.parentElement.appendChild(style);
         }
         getCacheBustString() {
             return Math.floor(Date.now() / CACHE_BUST_PERIOD).toString(36);
@@ -486,9 +587,9 @@
         canReload() {
             return this.lastCacheBust !== this.getCacheBustString();
         }
-        reload() {
+        initOrReloadTemplates(forced = false) {
             var _a, _b;
-            if (!this.canReload()) {
+            if (!this.canReload() && !forced) {
                 // fake a reload
                 for (let i = 0; i < this.templates.length; i++) {
                     this.templates[i].fakeReload(i * 50);
@@ -509,7 +610,20 @@
             this.alreadyLoaded = [];
             this.whitelist = [];
             this.blacklist = [];
-            this.loadTemplatesFromJsonURL(this.startingUrl);
+            if (this.startingUrl !== NO_JSON_TEMPLATE_IN_PARAMS)
+                this.loadTemplatesFromJsonURL(this.startingUrl);
+            GM.getValue(`${window.location.host}_alwaysLoad`).then(value => {
+                if (value && value !== "[]") {
+                    let templates = JSON.parse(value);
+                    for (let i = 0; i < templates.length; i++) {
+                        this.loadTemplatesFromJsonURL(templates[i]);
+                    }
+                }
+                else if (!this.notificationSent) {
+                    this.notificationManager.newNotification("template manager", "No default template set. Consider adding one via settings.");
+                    this.notificationSent = true;
+                }
+            });
         }
         currentSeconds() {
             let averageDiff = this.responseDiffs.reduce((a, b) => a + b, 0) / (this.responseDiffs.length);
@@ -526,23 +640,41 @@
                 }
             }
         }
+        setContactInfoDisplay(enabled) {
+            for (let i = 0; i < this.templates.length; i++) {
+                this.templates[i].setContactInfoDisplay(enabled);
+            }
+        }
     }
 
+    function createLabel(text) {
+        let label = document.createElement("label");
+        label.innerText = text;
+        return label;
+    }
     function createButton(text, callback) {
         let button = document.createElement("button");
         button.innerText = text;
         button.onclick = () => callback();
-        button.style.color = "#eee";
-        button.style.backgroundColor = "#19d";
-        button.style.padding = "5px";
-        button.style.borderRadius = "5px";
+        button.className = "settingsButton";
         return button;
+    }
+    function createTextInput(buttonText, placeholder, callback) {
+        let div = document.createElement("div");
+        let textInput = document.createElement("input");
+        textInput.type = "text";
+        textInput.placeholder = placeholder;
+        textInput.className = "settingsTextInput";
+        let button = createButton(buttonText, () => {
+            callback(textInput.value);
+        });
+        div.appendChild(textInput);
+        div.appendChild(button);
+        return div;
     }
     function createSlider(Text, value, callback) {
         let div = document.createElement("div");
-        div.style.backgroundColor = "#057";
-        div.style.padding = "5px";
-        div.style.borderRadius = "5px";
+        div.className = "settingsSliderBox";
         let slider = document.createElement("input");
         slider.type = "range";
         slider.min = '0';
@@ -564,9 +696,7 @@
     }
     function createBoldCheckbox(boldText, regularText, checked, callback) {
         let div = document.createElement("div");
-        div.style.backgroundColor = "#057";
-        div.style.padding = "5px";
-        div.style.borderRadius = "5px";
+        div.className = "settingsCheckbox";
         let checkbox = document.createElement('input');
         checkbox.type = "checkbox";
         checkbox.checked = checked;
@@ -586,25 +716,21 @@
     }
     class Settings {
         constructor(manager) {
-            this.div = document.createElement("div");
-            this.checkboxes = document.createElement("div");
+            this.overlay = document.createElement("div");
+            this.templateLinksWrapper = document.createElement("div");
+            this.notificationsWrapper = document.createElement("div");
+            this.reloadTemplatesWhenClosed = false;
+            this.templateLinksWrapper.className = "settingsWrapper";
+            this.templateLinksWrapper.id = "templateLinksWrapper";
+            this.notificationsWrapper.className = "settingsWrapper";
             this.manager = manager;
-            document.body.appendChild(this.div);
-            this.div.style.transition = "opacity 300ms";
-            this.div.style.width = "100vw";
-            this.div.style.height = "100vh";
-            this.div.style.position = "absolute";
-            this.div.style.left = "-0.1px";
-            this.div.style.top = "-0.1px";
-            this.div.style.backgroundColor = "rgba(0, 0, 0, 0.2)";
-            this.div.style.padding = "0";
-            this.div.style.margin = "0";
-            this.div.style.opacity = "0";
-            this.div.style.pointerEvents = "none";
-            this.div.style.zIndex = `${Number.MAX_SAFE_INTEGER}`;
-            this.div.style.textAlign = "center";
-            this.div.style.userSelect = "none";
-            this.div.onclick = (ev) => {
+            document.body.appendChild(this.overlay);
+            let style = document.createElement("style");
+            style.innerHTML = SETTINGS_CSS;
+            document.body.appendChild(style);
+            this.overlay.id = "settingsOverlay";
+            this.overlay.style.opacity = "0";
+            this.overlay.onclick = (ev) => {
                 if (ev.target === ev.currentTarget)
                     this.close();
             };
@@ -613,20 +739,17 @@
                     this.close();
                 }
             });
-            this.div.appendChild(document.createElement('br'));
-            let label = document.createElement("label");
-            label.textContent = ".json Template settings";
-            label.style.textShadow = "-1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111";
-            label.style.color = "#eee";
-            this.div.appendChild(label);
-            this.div.appendChild(document.createElement('br'));
-            this.div.appendChild(createButton("Reload the template", () => manager.reload()));
-            this.div.appendChild(document.createElement('br'));
-            this.div.appendChild(createSlider("Templates to load", "4", (n) => {
+            let div = document.createElement('div');
+            div.className = "settingsWrapper";
+            div.appendChild(createLabel(".json Template settings"));
+            div.appendChild(document.createElement('br'));
+            div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates()));
+            div.appendChild(document.createElement('br'));
+            div.appendChild(createSlider("Templates to load", "4", (n) => {
                 manager.templatesToLoad = (n + 1) * MAX_TEMPLATES / 5;
             }));
-            this.div.appendChild(document.createElement('br'));
-            this.div.appendChild(createButton("Generate new randomness", () => {
+            div.appendChild(document.createElement('br'));
+            div.appendChild(createButton("Generate new randomness", () => {
                 let currentRandomness = manager.randomness;
                 while (true) {
                     manager.randomness = Math.random();
@@ -634,57 +757,90 @@
                         break;
                 }
             }));
-            this.div.appendChild(document.createElement('br'));
-            this.div.appendChild(createSlider("Dither amount", "1", (n) => {
+            div.appendChild(document.createElement('br'));
+            div.appendChild(createSlider("Dither amount", "1", (n) => {
                 manager.percentage = 1 / (n / 10 + 1);
             }));
-            this.div.appendChild(document.createElement('br'));
-            this.div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
-                document.querySelectorAll('.iHasContactInfo').forEach((i) => {
-                    console.log(i);
-                    i.style.opacity = a ? "1" : "0";
-                });
+            div.appendChild(document.createElement('br'));
+            div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
+                manager.setContactInfoDisplay(a);
             }));
-            this.div.appendChild(document.createElement('br'));
-            this.checkboxes.style.backgroundColor = "rgba(0,0,0,0.5)";
-            this.checkboxes.style.padding = "8px";
-            this.checkboxes.style.borderRadius = "8px";
-            this.div.appendChild(this.checkboxes);
-            for (let c = 0; c < this.div.children.length; c++) {
-                let child = this.div.children[c];
-                child.style.margin = "8px 40%";
-            }
+            div.appendChild(document.createElement('br'));
+            this.overlay.appendChild(div);
+            this.overlay.appendChild(this.templateLinksWrapper);
+            this.overlay.appendChild(this.notificationsWrapper);
         }
         open() {
-            this.div.style.opacity = "1";
-            this.div.style.pointerEvents = "auto";
-            this.populateNotifications();
+            this.overlay.style.opacity = "1";
+            this.overlay.style.pointerEvents = "auto";
+            this.populateAll();
         }
         close() {
-            this.div.style.opacity = "0";
-            this.div.style.pointerEvents = "none";
+            this.overlay.style.opacity = "0";
+            this.overlay.style.pointerEvents = "none";
+            if (this.reloadTemplatesWhenClosed) {
+                this.manager.initOrReloadTemplates(true);
+                this.reloadTemplatesWhenClosed = false;
+            }
         }
         toggle() {
-            if (this.div.style.pointerEvents === "none") {
+            if (this.overlay.style.opacity === "0") {
                 this.open();
             }
             else {
                 this.close();
             }
         }
+        changeMouseEvents(enabled) {
+            if (this.overlay.style.opacity === "0")
+                this.overlay.style.pointerEvents = enabled ? "auto" : "none";
+        }
+        populateAll() {
+            this.populateTemplateLinks();
+            this.populateNotifications();
+        }
+        populateTemplateLinks() {
+            while (this.templateLinksWrapper.children.length) {
+                this.templateLinksWrapper.children[0].remove();
+            }
+            GM.getValue(`${window.location.host}_alwaysLoad`).then(value => {
+                let templates = value ? JSON.parse(value) : [];
+                let templateAdder = createTextInput("Always load", "Template URL", async (tx) => {
+                    let url = new URL(tx);
+                    let template = findJSONTemplateInURL(url) || url.toString();
+                    if (templates.includes(template))
+                        return;
+                    templates.push(template);
+                    await GM.setValue(`${window.location.host}_alwaysLoad`, JSON.stringify(templates));
+                    this.populateTemplateLinks();
+                    this.manager.loadTemplatesFromJsonURL(template);
+                });
+                this.templateLinksWrapper.appendChild(templateAdder);
+                if (templates.length > 0) {
+                    this.templateLinksWrapper.appendChild(createLabel("Click to remove template from always loading"));
+                }
+                for (let i = 0; i < templates.length; i++) {
+                    let button = createButton(templates[i], async () => {
+                        button.remove();
+                        templates.splice(i, 1);
+                        await GM.setValue(`${window.location.host}_alwaysLoad`, JSON.stringify(templates));
+                        this.populateTemplateLinks();
+                        this.reloadTemplatesWhenClosed = true;
+                    });
+                    button.className = `${button.className} templateLink`;
+                    this.templateLinksWrapper.appendChild(button);
+                }
+            });
+        }
         populateNotifications() {
-            while (this.checkboxes.children.length) {
-                this.checkboxes.children[0].remove();
+            while (this.notificationsWrapper.children.length) {
+                this.notificationsWrapper.children[0].remove();
             }
             let keys = this.manager.notificationTypes.keys();
             let key;
             while (!(key = keys.next()).done) {
                 let value = key.value;
-                let label = document.createElement("label");
-                label.textContent = value;
-                label.style.textShadow = "-1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111";
-                label.style.color = "#eee";
-                this.checkboxes.appendChild(label);
+                this.notificationsWrapper.appendChild(createLabel(value));
                 let notifications = this.manager.notificationTypes.get(value);
                 if (notifications === null || notifications === void 0 ? void 0 : notifications.length) {
                     for (let i = 0; i < notifications.length; i++) {
@@ -698,11 +854,11 @@
                             let enabledKey = `${window.location.host}_notificationsEnabled`;
                             await GM.setValue(enabledKey, JSON.stringify(this.manager.enabledNotifications));
                         });
-                        this.checkboxes.append(document.createElement('br'));
-                        this.checkboxes.append(checkbox);
+                        this.notificationsWrapper.append(document.createElement('br'));
+                        this.notificationsWrapper.append(checkbox);
                     }
                 }
-                this.checkboxes.append(document.createElement('br'));
+                this.notificationsWrapper.append(document.createElement('br'));
             }
         }
     }
@@ -758,6 +914,7 @@
         iconElement.addEventListener('mousedown', (ev) => {
             if (ev.button === 0) {
                 clicked = true;
+                settings.changeMouseEvents(true);
                 ev.preventDefault(); // prevent text from getting selected
             }
         });
@@ -773,6 +930,7 @@
                 }
                 clicked = false;
                 dragged = false;
+                settings.changeMouseEvents(false);
             }
         });
         window.addEventListener('mousemove', (ev) => {
@@ -803,20 +961,12 @@
             findCanvas(element.children[c]);
         }
     }
-    function findParams(urlString) {
-        const urlSearchParams = new URLSearchParams(urlString);
-        const params = Object.fromEntries(urlSearchParams.entries());
-        console.log(params);
-        return params.jsontemplate ? params.jsontemplate : null;
-    }
     function topWindow() {
         console.log("top window code for", window.location.href);
         GM.setValue('canvasFound', false);
-        let params = findParams(window.location.hash.substring(1)) || findParams(window.location.search.substring(1));
-        if (params) {
-            jsontemplate = params;
-            GM.setValue('jsontemplate', jsontemplate);
-        }
+        let params = findJSONTemplateInURL(window.location) || NO_JSON_TEMPLATE_IN_PARAMS;
+        jsontemplate = params;
+        GM.setValue('jsontemplate', jsontemplate);
     }
     async function canvasWindow() {
         console.log("canvas code for", window.location.href);

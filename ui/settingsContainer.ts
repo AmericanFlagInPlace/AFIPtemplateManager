@@ -1,23 +1,38 @@
-import { MAX_TEMPLATES } from "../constants";
+import { MAX_TEMPLATES, SETTINGS_CSS } from "../constants";
 import { TemplateManager } from "../templateManager";
 import * as utils from "../utils";
+
+function createLabel(text:string) {
+    let label = document.createElement("label");
+    label.innerText = text;
+    return label;
+}
 
 function createButton(text: string, callback: () => void) {
     let button = document.createElement("button");
     button.innerText = text;
     button.onclick = () => callback();
-    button.style.color = "#eee"
-    button.style.backgroundColor = "#19d"
-    button.style.padding = "5px"
-    button.style.borderRadius = "5px";
+    button.className = "settingsButton"
     return button;
+}
+
+function createTextInput(buttonText: string, placeholder: string, callback: (value: string) => void) {
+    let div = document.createElement("div")
+    let textInput = document.createElement("input")
+    textInput.type = "text"
+    textInput.placeholder = placeholder
+    textInput.className = "settingsTextInput"
+    let button = createButton(buttonText, () => {
+        callback(textInput.value)
+    })
+    div.appendChild(textInput)
+    div.appendChild(button)
+    return div
 }
 
 function createSlider(Text: string, value: string, callback: (n: number) => void) {
     let div = document.createElement("div");
-    div.style.backgroundColor = "#057"
-    div.style.padding = "5px"
-    div.style.borderRadius = "5px";
+    div.className = "settingsSliderBox"
     let slider = document.createElement("input");
     slider.type = "range";
     slider.min = '0';
@@ -40,9 +55,7 @@ function createSlider(Text: string, value: string, callback: (n: number) => void
 
 function createBoldCheckbox(boldText: string, regularText: string, checked: boolean, callback: (a: boolean) => void) {
     let div = document.createElement("div");
-    div.style.backgroundColor = "#057"
-    div.style.padding = "5px"
-    div.style.borderRadius = "5px";
+    div.className = "settingsCheckbox"
     let checkbox = document.createElement('input')
     checkbox.type = "checkbox"
     checkbox.checked = checked;
@@ -63,28 +76,25 @@ function createBoldCheckbox(boldText: string, regularText: string, checked: bool
 
 
 export class Settings {
-    div = document.createElement("div");
-    checkboxes = document.createElement("div");
+    overlay = document.createElement("div");
+    templateLinksWrapper = document.createElement("div");
+    notificationsWrapper = document.createElement("div");
     manager: TemplateManager;
+    reloadTemplatesWhenClosed = false;
     constructor(manager: TemplateManager) {
+        this.templateLinksWrapper.className = "settingsWrapper"
+        this.templateLinksWrapper.id = "templateLinksWrapper"
+        this.notificationsWrapper.className = "settingsWrapper"
         this.manager = manager;
 
-        document.body.appendChild(this.div);
-        this.div.style.transition = "opacity 300ms";
-        this.div.style.width = "100vw"
-        this.div.style.height = "100vh"
-        this.div.style.position = "absolute";
-        this.div.style.left = "-0.1px";
-        this.div.style.top = "-0.1px";
-        this.div.style.backgroundColor = "rgba(0, 0, 0, 0.2)"
-        this.div.style.padding = "0";
-        this.div.style.margin = "0";
-        this.div.style.opacity = "0";
-        this.div.style.pointerEvents = "none"
-        this.div.style.zIndex = `${Number.MAX_SAFE_INTEGER}`
-        this.div.style.textAlign = "center"
-        this.div.style.userSelect = "none"
-        this.div.onclick = (ev) => {
+        document.body.appendChild(this.overlay);
+        let style = document.createElement("style")
+        style.innerHTML = SETTINGS_CSS;
+        document.body.appendChild(style);
+
+        this.overlay.id = "settingsOverlay"
+        this.overlay.style.opacity = "0"
+        this.overlay.onclick = (ev) => {
             if (ev.target === ev.currentTarget)
                 this.close();
         }
@@ -94,20 +104,18 @@ export class Settings {
             }
         })
 
-        this.div.appendChild(document.createElement('br'))
-        let label = document.createElement("label")
-        label.textContent = ".json Template settings"
-        label.style.textShadow = "-1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111"
-        label.style.color = "#eee"
-        this.div.appendChild(label)
-        this.div.appendChild(document.createElement('br'))
-        this.div.appendChild(createButton("Reload the template", () => manager.reload()))
-        this.div.appendChild(document.createElement('br'))
-        this.div.appendChild(createSlider("Templates to load", "4", (n) => {
+        let div = document.createElement('div')
+        div.className = "settingsWrapper"
+
+        div.appendChild(createLabel(".json Template settings"))
+        div.appendChild(document.createElement('br'))
+        div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates()))
+        div.appendChild(document.createElement('br'))
+        div.appendChild(createSlider("Templates to load", "4", (n) => {
             manager.templatesToLoad = (n + 1) * MAX_TEMPLATES / 5
         }))
-        this.div.appendChild(document.createElement('br'))
-        this.div.appendChild(createButton("Generate new randomness", () => {
+        div.appendChild(document.createElement('br'))
+        div.appendChild(createButton("Generate new randomness", () => {
             let currentRandomness = manager.randomness;
             while (true) {
                 manager.randomness = Math.random()
@@ -115,62 +123,97 @@ export class Settings {
             }
 
         }))
-        this.div.appendChild(document.createElement('br'))
-        this.div.appendChild(createSlider("Dither amount", "1", (n) => {
+        div.appendChild(document.createElement('br'))
+        div.appendChild(createSlider("Dither amount", "1", (n) => {
             manager.percentage = 1 / (n / 10 + 1)
         }))
-        this.div.appendChild(document.createElement('br'))
-        this.div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
-            document.querySelectorAll('.iHasContactInfo').forEach((i) => {
-                console.log(i as HTMLElement);
-                (i as HTMLElement).style.opacity = a ? "1" : "0";
-            })
+        div.appendChild(document.createElement('br'))
+        div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
+            manager.setContactInfoDisplay(a)
         }))
-        this.div.appendChild(document.createElement('br'))
+        div.appendChild(document.createElement('br'))
 
-        this.checkboxes.style.backgroundColor = "rgba(0,0,0,0.5)"
-        this.checkboxes.style.padding = "8px"
-        this.checkboxes.style.borderRadius = "8px"
-        this.div.appendChild(this.checkboxes)
 
-        for (let c = 0; c < this.div.children.length; c++) {
-            let child = this.div.children[c] as HTMLElement
-            child.style.margin = "8px 40%"
-        }
+        this.overlay.appendChild(div)
+        this.overlay.appendChild(this.templateLinksWrapper)
+        this.overlay.appendChild(this.notificationsWrapper)
     }
 
     open() {
-        this.div.style.opacity = "1"
-        this.div.style.pointerEvents = "auto"
-        this.populateNotifications()
+        this.overlay.style.opacity = "1"
+        this.overlay.style.pointerEvents = "auto"
+        this.populateAll()
     }
 
     close() {
-        this.div.style.opacity = "0"
-        this.div.style.pointerEvents = "none"
+        this.overlay.style.opacity = "0"
+        this.overlay.style.pointerEvents = "none"
+        if (this.reloadTemplatesWhenClosed) {
+            this.manager.initOrReloadTemplates(true)
+            this.reloadTemplatesWhenClosed = false
+        }
     }
 
     toggle() {
-        if (this.div.style.pointerEvents === "none") {
+        if (this.overlay.style.opacity === "0") {
             this.open()
         } else {
             this.close()
         }
     }
 
+    changeMouseEvents(enabled: boolean) {
+        if (this.overlay.style.opacity === "0")
+            this.overlay.style.pointerEvents = enabled ? "auto" : "none"
+    }
+
+    populateAll() {
+        this.populateTemplateLinks()
+        this.populateNotifications()
+    }
+
+    populateTemplateLinks() {
+        while (this.templateLinksWrapper.children.length) {
+            this.templateLinksWrapper.children[0].remove()
+        }
+        GM.getValue(`${window.location.host}_alwaysLoad`).then(value => {
+            let templates: string[] = value ? JSON.parse(value as string) : []
+            let templateAdder = createTextInput("Always load", "Template URL", async (tx) => {
+                let url = new URL(tx)
+                let template = utils.findJSONTemplateInURL(url) || url.toString()
+                if (templates.includes(template)) return;
+                templates.push(template)
+                await GM.setValue(`${window.location.host}_alwaysLoad`, JSON.stringify(templates))
+                this.populateTemplateLinks()
+                this.manager.loadTemplatesFromJsonURL(template)
+            })
+            this.templateLinksWrapper.appendChild(templateAdder)
+            if (templates.length > 0) {
+                this.templateLinksWrapper.appendChild(createLabel("Click to remove template from always loading"))
+            }
+            for (let i = 0; i < templates.length; i++) {
+                let button = createButton(templates[i], async () => {
+                    button.remove()
+                    templates.splice(i, 1)
+                    await GM.setValue(`${window.location.host}_alwaysLoad`, JSON.stringify(templates))
+                    this.populateTemplateLinks()
+                    this.reloadTemplatesWhenClosed = true
+                })
+                button.className = `${button.className} templateLink`
+                this.templateLinksWrapper.appendChild(button)
+            }
+        })
+    }
+
     populateNotifications() {
-        while (this.checkboxes.children.length) {
-            this.checkboxes.children[0].remove()
+        while (this.notificationsWrapper.children.length) {
+            this.notificationsWrapper.children[0].remove()
         }
         let keys = this.manager.notificationTypes.keys()
         let key: IteratorResult<string, string>;
         while (!(key = keys.next()).done) {
             let value = key.value
-            let label = document.createElement("label")
-            label.textContent = value
-            label.style.textShadow = "-1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111"
-            label.style.color = "#eee"
-            this.checkboxes.appendChild(label)
+            this.notificationsWrapper.appendChild(createLabel(value))
             let notifications = this.manager.notificationTypes.get(value)
             if (notifications?.length) {
                 for (let i = 0; i < notifications.length; i++) {
@@ -184,11 +227,11 @@ export class Settings {
                         let enabledKey = `${window.location.host}_notificationsEnabled`
                         await GM.setValue(enabledKey, JSON.stringify(this.manager.enabledNotifications))
                     })
-                    this.checkboxes.append(document.createElement('br'))
-                    this.checkboxes.append(checkbox)
+                    this.notificationsWrapper.append(document.createElement('br'))
+                    this.notificationsWrapper.append(checkbox)
                 }
             }
-            this.checkboxes.append(document.createElement('br'))
+            this.notificationsWrapper.append(document.createElement('br'))
         }
     }
 }

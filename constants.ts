@@ -21,7 +21,43 @@ export const CONTACT_INFO_CSS = css`
         pointer-events: none;
     }
 `
-export const SETTINGS_CSS = css`
+export const GLOBAL_CANVAS_CSS = css`
+    #osuplaceNotificationContainer {
+        width: 150px;
+        height: 66%;
+        position: absolute;
+        z-index: 9999;
+        top: -0.1px;
+        right: 10px;
+        background-color: rgba(255, 255, 255, 0);
+        pointer-events: none;
+        user-select: none;
+    }
+
+    .osuplaceNotification {
+        border-radius: 8px;
+        background-color: #621;
+        color: #eee;
+        transition: height 300ms, opacity 300ms, padding 300ms, margin 300ms;
+        overflow: hidden;
+        pointer-events: auto;
+        cursor: pointer;
+    }
+
+    .osuplaceNotification.hidden {
+        height: 0px;
+        opacity: 0;
+        padding: 0px;
+        margin: 0px;
+    }
+
+    .osuplaceNotification.visible { 
+        height: auto;
+        opacity: 1;
+        padding: 8px;
+        margin: 8px;
+    }
+
     #settingsOverlay {
         transition: opacity 300ms ease 0s;
         width: 100vw;
@@ -38,29 +74,38 @@ export const SETTINGS_CSS = css`
         text-align: center;
         user-select: none;
     }
-    #settingsOverlay label {
+
+    #settingsOverlay label,
+    #settingsOverlay button{
+        height: auto;
+        white-space: normal;
+        word-break: break-word;
         text-shadow: -1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111;
         color: #eee;
     }
     #settingsOverlay input[type=range] {
         
     }
+
     .settingsWrapper {
         background-color: rgba(0, 0, 0, 0.5);
         padding: 8px;
         border-radius: 8px;
         border: 1px solid rgba(238, 238, 238, 0.5);
-        margin: 0.5rem 40%
+        margin: 0.5rem auto auto;
+        min-width: 13rem;
+        max-width: 20%;
     }
-    #templateLinksWrapper button,
-    #templateLinksWrapper label {
-        height: auto;
+
+    #templateLinksWrapper button{
         word-break: break-all;
-        white-space: normal;
+        cursor: pointer;
     }
+
     .settingsWrapper:empty {
         display: none;
     }
+
     .settingsButton {
         cursor: pointer;
         display: inline-block;
@@ -72,15 +117,18 @@ export const SETTINGS_CSS = css`
         line-height: 1.1em;
         border: 1px solid rgba(238, 238, 238, 0.5);
     }
+
     .settingsButton:hover {
         background-color: rgba(64, 64, 64, 0.5);
     }
+
     .settingsSliderBox, .settingsCheckbox {
         background-color: rgba(0, 0, 0, 0.5);
         padding: 0.25rem 0.5rem;
         border-radius: 5px;
         margin: 0.5rem;
     }
+
     .templateLink:hover {
         background-color: rgba(128, 0, 0, 0.5);
     }

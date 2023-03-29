@@ -1,4 +1,4 @@
-import { CACHE_BUST_PERIOD, CONTACT_INFO_CSS, MAX_TEMPLATES, NO_JSON_TEMPLATE_IN_PARAMS } from './constants';
+import { CACHE_BUST_PERIOD, CONTACT_INFO_CSS, GLOBAL_CANVAS_CSS, MAX_TEMPLATES, NO_JSON_TEMPLATE_IN_PARAMS } from './constants';
 import { Template, JsonParams, NotificationServer, NotificationTypes } from './template';
 import { NotificationManager } from './ui/notificationsManager';
 import * as utils from './utils';
@@ -27,12 +27,6 @@ export class TemplateManager {
         this.startingUrl = startingUrl
         this.initOrReloadTemplates(true)
 
-        window.addEventListener('keydown', (ev: KeyboardEvent) => {
-            if (ev.key.match(/^\d$/)) {
-                let number = parseInt(ev.key) || 1.1
-                this.percentage = 1 / number
-            }
-        })
         GM.getValue(`${window.location.host}_notificationsEnabled`, "[]").then((value) => {
             this.enabledNotifications = JSON.parse(value)
         })
@@ -40,6 +34,10 @@ export class TemplateManager {
         let style = document.createElement('style')
         style.innerHTML = CONTACT_INFO_CSS
         canvasElement.parentElement!.appendChild(style)
+
+        let globalStyle = document.createElement("style")
+        globalStyle.innerHTML = GLOBAL_CANVAS_CSS;
+        document.body.appendChild(globalStyle);
     }
 
     getCacheBustString() {

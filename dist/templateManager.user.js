@@ -1,9 +1,9 @@
 
 // ==UserScript==
 // @name			template-manager
-// @version			0.4.4
+// @version			0.4.5
 // @description		Manages your templates on various canvas games
-// @author			LittleEndu
+// @author			LittleEndu, Mikarific
 // @license			MIT
 // @grant			GM.xmlHttpRequest
 // @grant			GM.setValue
@@ -221,6 +221,8 @@
 
     function extractFrame(image, frameWidth, frameHeight, frameIndex) {
         let canvas = document.createElement('canvas');
+        canvas.width = frameWidth;
+        canvas.height = frameHeight;
         let context = canvas.getContext('2d');
         if (!context)
             return null;

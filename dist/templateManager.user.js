@@ -1,9 +1,9 @@
 
 // ==UserScript==
 // @name			template-manager
-// @version			0.4.5
+// @version			0.4.6
 // @description		Manages your templates on various canvas games
-// @author			LittleEndu, Mikarific
+// @author			LittleEndu, Mikarific, April
 // @license			MIT
 // @grant			GM.xmlHttpRequest
 // @grant			GM.setValue
@@ -35,6 +35,8 @@
     const NO_JSON_TEMPLATE_IN_PARAMS = "no_json_template";
     const CONTACT_INFO_CSS = css `
     div.iHasContactInfo {
+        max-width: 100px;
+        overflow: hidden;
         font-weight: bold;
         font-size: 1px;
         font-family: serif; /* this fixes firefox */
@@ -50,7 +52,7 @@
 `;
     const GLOBAL_CANVAS_CSS = css `
     #osuplaceNotificationContainer {
-        width: 150px;
+        width: 200px;
         height: 66%;
         position: absolute;
         z-index: 9999;
@@ -69,6 +71,7 @@
         overflow: hidden;
         pointer-events: auto;
         cursor: pointer;
+        word-wrap: break-word;
     }
 
     .osuplaceNotification.hidden {
@@ -311,7 +314,7 @@
                 let checkingCoords = true;
                 while (checkingCoords) {
                     checkingCoords = false;
-                    let contactInfos = globalCanvas.parentElement.querySelectorAll('.iHasContactInfo');
+                    let contactInfos = this.globalCanvas.parentElement.querySelectorAll('.iHasContactInfo');
                     for (let i = 0; i < contactInfos.length; i++) {
                         let child = contactInfos[i];
                         if (child && parseInt(child.style.left) === contactX && parseInt(child.style.top) === contactY) {
@@ -335,6 +338,27 @@
                 this.contactElement.appendChild(document.createTextNode(contact));
                 this.insertPriorityElement(this.contactElement);
             }
+            let updateStyle = () => {
+                let css = getComputedStyle(this.globalCanvas);
+                let globalRatio = parseFloat(this.globalCanvas.style.width) / this.globalCanvas.width;
+                this.canvasElement.style.width = `${this.frameWidth * globalRatio}px`;
+                this.canvasElement.style.height = `${this.frameHeight * globalRatio}px`;
+                if (css.left !== "auto")
+                    this.canvasElement.style.left = `calc(${this.x * globalRatio}px + ${css.left})`;
+                else
+                    this.canvasElement.style.left = `${this.x * globalRatio}px`;
+                if (css.right !== "auto")
+                    this.canvasElement.style.top = `calc(${this.y * globalRatio}px + ${css.top})`;
+                else
+                    this.canvasElement.style.top = `${this.y * globalRatio}px`;
+                this.canvasElement.style.translate = css.translate;
+                this.canvasElement.style.transform = css.transform;
+                this.canvasElement.style.zIndex = (parseInt(css.zIndex) + priority).toString();
+            };
+            // observe changes in the canvas
+            let observer = new MutationObserver(updateStyle);
+            observer.observe(globalCanvas, { attributes: true });
+            updateStyle();
         }
         setContactInfoDisplay(enabled) {
             if (this.contactElement) {
@@ -365,20 +389,21 @@
             return negativeSafeModulo(Math.floor((currentSeconds - this.startTime) / this.frameSpeed), this.frameCount);
         }
         insertPriorityElement(element) {
-            let priorityElements = this.globalCanvas.parentElement.children;
+            let container = this.globalCanvas.parentElement;
+            let priorityElements = container.children;
             let priorityElementsArray = Array.from(priorityElements).filter(el => el.hasAttribute('priority'));
             if (priorityElementsArray.length === 0) {
-                this.globalCanvas.parentElement.appendChild(element);
+                container.appendChild(element);
             }
             else {
                 priorityElementsArray.push(element);
                 priorityElementsArray.sort((a, b) => parseInt(b.getAttribute('priority')) - parseInt(a.getAttribute('priority')));
                 let index = priorityElementsArray.findIndex(el => el === element);
                 if (index === priorityElementsArray.length - 1) {
-                    this.globalCanvas.parentElement.appendChild(element);
+                    container.appendChild(element);
                 }
                 else {
-                    this.globalCanvas.parentElement.insertBefore(element, priorityElementsArray[index + 1]);
+                    container.insertBefore(element, priorityElementsArray[index + 1]);
                 }
             }
         }
@@ -396,17 +421,8 @@
         frameStartTime(n = null) {
             return (this.startTime + (n || this.currentFrame || 0) * this.frameSpeed) % this.animationDuration;
         }
-        updateStyle() {
-            // for canvas games where the canvas itself has css applied
-            let globalRatio = parseFloat(this.globalCanvas.style.width) / this.globalCanvas.width;
-            this.canvasElement.style.width = `${this.frameWidth * globalRatio}px`;
-            this.canvasElement.style.height = `${this.frameHeight * globalRatio}px`;
-            this.canvasElement.style.left = `${this.x * globalRatio}px`;
-            this.canvasElement.style.top = `${this.y * globalRatio}px`;
-        }
         update(percentage, randomness, currentSeconds) {
             var _a;
-            this.updateStyle();
             // return if the animation is finished
             if (!this.looping && currentSeconds > this.startTime + this.frameSpeed * this.frameCount) {
                 return;
@@ -576,36 +592,72 @@
                     }
                     // connect to websocket
                     if (json.notifications) {
-                        this.connectToWebSocket(json.notifications);
+                        this.setupNotifications(json.notifications, url == this.startingUrl);
                     }
                 }
             });
         }
-        connectToWebSocket(server) {
-            console.log("trying to connect to websocket at ", server.url);
-            let client = new WebSocket(server.url);
-            this.notificationTypes.set(server.url, server.types);
-            client.addEventListener('open', (_) => {
-                console.log("successfully connected to ", server.url);
-                this.websockets.push(client);
-            });
-            client.addEventListener('message', async (ev) => {
-                console.log("received message from ", server, ev);
-                console.log(await ev.data.text());
-                let key = await ev.data.text();
-                let notification = server.types.find((t) => t.key === key);
-                if (notification && this.enabledNotifications.includes(`${server.url}??${key}`)) {
-                    this.notificationManager.newNotification(server.url, notification.message);
+        setupNotifications(serverUrl, isTopLevelTemplate) {
+            console.log('attempting to set up notification server ' + serverUrl);
+            // get topics
+            let domain = new URL(serverUrl).hostname.replace('broadcaster.', '');
+            fetch(`${serverUrl}/topics`)
+                .then((response) => {
+                if (!response.ok) {
+                    console.error(`error getting ${serverUrl}/topics, trying again in 10s...`);
+                    setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
                 }
-            });
-            client.addEventListener('close', (_) => {
-                removeItem(this.websockets, client);
-                setTimeout(() => {
-                    this.connectToWebSocket(server);
-                }, 1000 * 60);
-            });
-            client.addEventListener('error', (_) => {
-                client.close();
+                return response.json();
+            })
+                .then((data) => {
+                let topics = [];
+                data.forEach((topicFromApi) => {
+                    if (!topicFromApi.id || !topicFromApi.description) {
+                        console.error('Invalid topic: ' + topicFromApi);
+                        return;
+                    }
+                    let topic = topicFromApi;
+                    topic.forced = isTopLevelTemplate;
+                    topics.push(topic);
+                });
+                this.notificationTypes.set(domain, topics);
+                // actually connecting to the websocket now
+                let wsUrl = new URL('/listen', serverUrl);
+                wsUrl.protocol = wsUrl.protocol == 'https' ? 'wss' : 'ws';
+                let ws = new WebSocket(wsUrl);
+                ws.addEventListener('open', (_) => {
+                    console.log(`successfully connected to websocket for ${serverUrl}`);
+                    this.websockets.push(ws);
+                });
+                ws.addEventListener('message', async (event) => {
+                    // https://github.com/osuplace/broadcaster/blob/main/API.md
+                    let data = JSON.parse(await event.data);
+                    if (data.e == 1) {
+                        if (!data.t || !data.c) {
+                            console.error(`Malformed event from ${serverUrl}: ${data}`);
+                        }
+                        let topic = topics.find(t => t.id == data.t); // FIXME: if we add dynamically updating topics, this will use the old topic list instead of the up to date one
+                        if (!topic)
+                            return;
+                        if (this.enabledNotifications.includes(`${domain}??${data.t}`) || topic.forced) {
+                            this.notificationManager.newNotification(domain, data.c);
+                        }
+                    }
+                    else {
+                        console.log(`Received unknown event from ${serverUrl}: ${data}`);
+                    }
+                });
+                ws.addEventListener('close', (_) => {
+                    removeItem(this.websockets, ws);
+                    setTimeout(() => {
+                        this.setupNotifications(serverUrl, isTopLevelTemplate);
+                    }, 1000 * 60);
+                });
+                ws.addEventListener('error', (_) => {
+                    ws.close();
+                });
+            }).catch((error) => {
+                console.error(`Couldn\'t get topics from ${serverUrl}: ${error}`);
             });
         }
         canReload() {
@@ -718,12 +770,13 @@
         div.append(slider);
         return div;
     }
-    function createBoldCheckbox(boldText, regularText, checked, callback) {
+    function createBoldCheckbox(boldText, regularText, checked, callback, disabled = false) {
         let div = document.createElement("div");
         div.className = "settingsCheckbox";
         let checkbox = document.createElement('input');
         checkbox.type = "checkbox";
         checkbox.checked = checked;
+        checkbox.disabled = disabled;
         checkbox.oninput = (ev) => {
             ev.preventDefault();
             callback(checkbox.checked);
@@ -866,15 +919,17 @@
                 if (notifications === null || notifications === void 0 ? void 0 : notifications.length) {
                     for (let i = 0; i < notifications.length; i++) {
                         let notification = notifications[i];
-                        let enabled = this.manager.enabledNotifications.includes(`${value}??${notification.key}`);
-                        let checkbox = createBoldCheckbox(notification.key + " - ", notification.message, enabled, async (b) => {
-                            removeItem(this.manager.enabledNotifications, `${value}??${notification.key}`);
+                        let enabled = this.manager.enabledNotifications.includes(`${value}??${notification.id}`);
+                        if (notification.forced)
+                            enabled = true;
+                        let checkbox = createBoldCheckbox(notification.id + " - ", notification.description, enabled, async (b) => {
+                            removeItem(this.manager.enabledNotifications, `${value}??${notification.id}`);
                             if (b) {
-                                this.manager.enabledNotifications.push(`${value}??${notification.key}`);
+                                this.manager.enabledNotifications.push(`${value}??${notification.id}`);
                             }
                             let enabledKey = `${window.location.host}_notificationsEnabled`;
                             await GM.setValue(enabledKey, JSON.stringify(this.manager.enabledNotifications));
-                        });
+                        }, notification.forced);
                         this.notificationsWrapper.append(document.createElement('br'));
                         this.notificationsWrapper.append(checkbox);
                     }

@@ -1,7 +1,7 @@
 
 // ==UserScript==
 // @name			template-manager
-// @version			0.4.6
+// @version			0.4.8
 // @description		Manages your templates on various canvas games
 // @author			LittleEndu, Mikarific, April
 // @license			MIT
@@ -35,19 +35,27 @@
     const NO_JSON_TEMPLATE_IN_PARAMS = "no_json_template";
     const CONTACT_INFO_CSS = css `
     div.iHasContactInfo {
-        max-width: 100px;
+        max-width: 30px; 
+        padding: 1px;
+        font-size: 1px; /* these 3 will be overwritten, but oh well */
+        width: max-content; 
+        white-space: nowrap;
         overflow: hidden;
         font-weight: bold;
-        font-size: 1px;
         font-family: serif; /* this fixes firefox */
         color: #eee;
         background-color: #111;
-        padding: 1px;
-        border-radius: 1px;
         opacity: 0;
-        transition: opacity 500ms, width 200ms, height 200ms;
+        transition: opacity 500ms, width 200ms, height 200ms, max-width 200ms;
         position: absolute;
         pointer-events: none;
+        z-index: 9999999;
+    }
+
+    div.iHasContactInfo:hover {
+        z-index: 99999999;
+        max-width: 100%;
+        width: auto;
     }
 `;
     const GLOBAL_CANVAS_CSS = css `
@@ -72,9 +80,6 @@
         pointer-events: auto;
         cursor: pointer;
         word-wrap: break-word;
-    }
-
-    .osuplaceNotification.hidden {
         height: 0px;
         opacity: 0;
         padding: 0px;
@@ -103,6 +108,8 @@
         z-index: 2147483647;
         text-align: center;
         user-select: none;
+        overflow-y: auto;
+        font-size: 14px;
     }
 
     #settingsOverlay label,
@@ -113,8 +120,17 @@
         text-shadow: -1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111;
         color: #eee;
     }
-    #settingsOverlay input[type=range] {
-        
+    
+    #settingsOverlay input {
+        width: auto;
+        max-width: 100%;
+        height: auto;
+        color: #eee;
+        background-color: #111;
+        -webkit-appearance: auto;
+        padding: 5px;
+        border-radius: 5px;
+        font-size: 14px;
     }
 
     .settingsWrapper {
@@ -122,7 +138,7 @@
         padding: 8px;
         border-radius: 8px;
         border: 1px solid rgba(238, 238, 238, 0.5);
-        margin: 0.5rem auto auto;
+        margin: 0.5rem auto 0.5rem auto;
         min-width: 13rem;
         max-width: 20%;
     }
@@ -221,6 +237,22 @@
     function findJSONTemplateInURL(url) {
         return findJSONTemplateInParams(url.hash.substring(1)) || findJSONTemplateInParams(url.search.substring(1));
     }
+    function findElementOfType(element, type) {
+        let rv = [];
+        if (element instanceof type) {
+            console.log('found canvas', element, window.location.href);
+            rv.push(element);
+        }
+        // find in Shadow DOM elements
+        if (element instanceof HTMLElement && element.shadowRoot) {
+            rv.push(...findElementOfType(element.shadowRoot, type));
+        }
+        // find in children
+        for (let c = 0; c < element.children.length; c++) {
+            rv.push(...findElementOfType(element.children[c], type));
+        }
+        return rv;
+    }
 
     function extractFrame(image, frameWidth, frameHeight, frameIndex) {
         let canvas = document.createElement('canvas');
@@ -259,6 +291,7 @@
 
     class Template {
         constructor(params, contact, globalCanvas, priority) {
+            var _a, _b;
             this.imageLoader = new Image();
             this.canvasElement = document.createElement('canvas');
             this.loading = false;
@@ -308,25 +341,31 @@
                 this.sources.shift();
             });
             // add contact info container
+            this.contactX = Math.round(this.x / 5) * 5;
+            this.contactY = Math.round(this.y / 5) * 5;
             if (contact) {
-                let contactX = Math.round(this.x / 5) * 5;
-                let contactY = Math.round(this.y / 5) * 5;
                 let checkingCoords = true;
                 while (checkingCoords) {
                     checkingCoords = false;
                     let contactInfos = this.globalCanvas.parentElement.querySelectorAll('.iHasContactInfo');
                     for (let i = 0; i < contactInfos.length; i++) {
                         let child = contactInfos[i];
-                        if (child && parseInt(child.style.left) === contactX && parseInt(child.style.top) === contactY) {
+                        let childX = parseInt((_a = child.getAttribute('contactX')) !== null && _a !== void 0 ? _a : '0');
+                        let childY = parseInt((_b = child.getAttribute('contactY')) !== null && _b !== void 0 ? _b : '0');
+                        if (child
+                            && childX >= this.contactX && childX <= this.contactX + 50
+                            && childY === this.contactY) {
                             checkingCoords = true;
-                            contactX += 5;
-                            contactY += 5;
+                            this.contactX += 5;
+                            this.contactY += 5;
                         }
                     }
                 }
                 this.contactElement = document.createElement('div');
-                this.contactElement.style.left = `${contactX}px`;
-                this.contactElement.style.top = `${contactY}px`;
+                this.contactElement.setAttribute('contactX', this.contactX.toString());
+                this.contactElement.setAttribute('contactY', this.contactY.toString());
+                this.contactElement.style.left = `${this.contactX}px`;
+                this.contactElement.style.top = `${this.contactY}px`;
                 let contactPriority = Math.round(Number.MIN_SAFE_INTEGER / 100 + priority);
                 this.contactElement.setAttribute('priority', contactPriority.toString());
                 this.contactElement.className = 'iHasContactInfo';
@@ -337,32 +376,44 @@
                 }
                 this.contactElement.appendChild(document.createTextNode(contact));
                 this.insertPriorityElement(this.contactElement);
+                this.initialContactCSS = getComputedStyle(this.contactElement);
             }
-            let updateStyle = () => {
-                let css = getComputedStyle(this.globalCanvas);
-                let globalRatio = parseFloat(this.globalCanvas.style.width) / this.globalCanvas.width;
-                this.canvasElement.style.width = `${this.frameWidth * globalRatio}px`;
-                this.canvasElement.style.height = `${this.frameHeight * globalRatio}px`;
-                if (css.left !== "auto")
-                    this.canvasElement.style.left = `calc(${this.x * globalRatio}px + ${css.left})`;
+        }
+        updateStyle(globalRatio, left, top, translate, transform, zIndex) {
+            this.canvasElement.style.width = `${this.frameWidth * globalRatio}px`;
+            this.canvasElement.style.height = `${this.frameHeight * globalRatio}px`;
+            if (left !== "auto")
+                this.canvasElement.style.left = `calc(${this.x * globalRatio}px + ${left})`;
+            else
+                this.canvasElement.style.left = `${this.x * globalRatio}px`;
+            if (top !== "auto")
+                this.canvasElement.style.top = `calc(${this.y * globalRatio}px + ${top})`;
+            else
+                this.canvasElement.style.top = `${this.y * globalRatio}px`;
+            this.canvasElement.style.translate = translate;
+            this.canvasElement.style.transform = transform;
+            this.canvasElement.style.zIndex = zIndex;
+            if (this.contactElement) {
+                if (left !== "auto")
+                    this.contactElement.style.left = `calc(${this.contactX * globalRatio}px + ${left})`;
                 else
-                    this.canvasElement.style.left = `${this.x * globalRatio}px`;
-                if (css.right !== "auto")
-                    this.canvasElement.style.top = `calc(${this.y * globalRatio}px + ${css.top})`;
+                    this.contactElement.style.left = `${this.contactX * globalRatio}px`;
+                if (top !== "auto")
+                    this.contactElement.style.top = `calc(${this.contactY * globalRatio}px + ${top})`;
                 else
-                    this.canvasElement.style.top = `${this.y * globalRatio}px`;
-                this.canvasElement.style.translate = css.translate;
-                this.canvasElement.style.transform = css.transform;
-                this.canvasElement.style.zIndex = (parseInt(css.zIndex) + priority).toString();
-            };
-            // observe changes in the canvas
-            let observer = new MutationObserver(updateStyle);
-            observer.observe(globalCanvas, { attributes: true });
-            updateStyle();
+                    this.contactElement.style.top = `${this.contactY * globalRatio}px`;
+                this.contactElement.style.maxWidth = `${30 * globalRatio}px`;
+                this.contactElement.style.padding = `${globalRatio}px`;
+                this.contactElement.style.fontSize = `${globalRatio}px`;
+                this.contactElement.style.translate = translate;
+                this.contactElement.style.transform = transform;
+                this.contactElement.style.zIndex = zIndex;
+            }
         }
         setContactInfoDisplay(enabled) {
             if (this.contactElement) {
                 this.contactElement.style.opacity = enabled ? "1" : "0";
+                this.contactElement.style.pointerEvents = enabled ? "auto" : "none";
             }
         }
         tryLoadSource() {
@@ -502,20 +553,20 @@
             div.appendChild(wrapInHtml('i', `${url} says:`));
             div.append(document.createElement('br'));
             div.append(wrapInHtml('b', message));
-            div.className = 'osuplaceNotification hidden';
+            div.className = 'osuplaceNotification';
             div.onclick = () => {
-                div.className = 'osuplaceNotification hidden';
+                div.classList.remove('visible');
                 setTimeout(() => div.remove(), 500);
             };
             this.container.appendChild(div);
             setTimeout(() => {
-                div.className = 'osuplaceNotification visible';
+                div.classList.add('visible');
             }, 100);
         }
     }
 
     class TemplateManager {
-        constructor(canvasElement, startingUrl) {
+        constructor(canvasElements, startingUrl) {
             this.templatesToLoad = MAX_TEMPLATES;
             this.alreadyLoaded = new Array();
             this.websockets = new Array();
@@ -523,30 +574,75 @@
             this.enabledNotifications = new Array();
             this.whitelist = new Array();
             this.blacklist = new Array();
+            this.templateConstructors = new Array();
             this.templates = new Array();
             this.responseDiffs = new Array();
+            this.canvasElements = [];
             this.randomness = Math.random();
             this.percentage = 1;
             this.lastCacheBust = this.getCacheBustString();
             this.notificationManager = new NotificationManager();
             this.notificationSent = false;
-            this.canvasElement = canvasElement;
+            console.log('TemplateManager constructor ', canvasElements);
+            this.canvasElements = canvasElements;
+            this.selectedCanvas = canvasElements[0];
+            this.selectBestCanvas();
             this.startingUrl = startingUrl;
             this.initOrReloadTemplates(true);
             GM.getValue(`${window.location.host}_notificationsEnabled`, "[]").then((value) => {
                 this.enabledNotifications = JSON.parse(value);
             });
             let style = document.createElement('style');
+            style.id = 'osuplace-contactinfo-style';
             style.innerHTML = CONTACT_INFO_CSS;
-            canvasElement.parentElement.appendChild(style);
+            this.selectedCanvas.parentElement.appendChild(style);
             let globalStyle = document.createElement("style");
             globalStyle.innerHTML = GLOBAL_CANVAS_CSS;
             document.body.appendChild(globalStyle);
+            this.canvasObserver = new MutationObserver(() => {
+                let css = getComputedStyle(this.selectedCanvas);
+                let left = css.left;
+                let top = css.top;
+                let translate = css.translate;
+                let transform = css.transform;
+                let zIndex = css.zIndex;
+                let globalRatio = parseFloat(this.selectedCanvas.style.width) / this.selectedCanvas.width;
+                for (let i = 0; i < this.templates.length; i++) {
+                    this.templates[i].updateStyle(globalRatio, left, top, translate, transform, zIndex);
+                }
+            });
+            this.canvasObserver.observe(this.selectedCanvas, { attributes: true });
+        }
+        selectBestCanvas() {
+            var _a, _b, _c;
+            let selectionChanged = false;
+            let selectedBounds = this.selectedCanvas.getBoundingClientRect();
+            for (let i = 0; i < this.canvasElements.length; i++) {
+                let canvas = this.canvasElements[i];
+                let canvasBounds = canvas.getBoundingClientRect();
+                let selectedArea = selectedBounds.width * selectedBounds.height;
+                let canvasArea = canvasBounds.width * canvasBounds.height;
+                if (canvasArea > selectedArea) {
+                    this.selectedCanvas = canvas;
+                    selectedBounds = canvasBounds;
+                    selectionChanged = true;
+                }
+            }
+            if (selectionChanged) {
+                while (this.templates.length) {
+                    (_a = this.templates.shift()) === null || _a === void 0 ? void 0 : _a.destroy();
+                }
+                for (let i = 0; i < this.templateConstructors.length; i++) {
+                    this.templates.push(this.templateConstructors[i](this.selectedCanvas));
+                }
+                (_b = this.canvasObserver) === null || _b === void 0 ? void 0 : _b.disconnect();
+                (_c = this.canvasObserver) === null || _c === void 0 ? void 0 : _c.observe(this.selectedCanvas, { attributes: true });
+            }
         }
         getCacheBustString() {
             return Math.floor(Date.now() / CACHE_BUST_PERIOD).toString(36);
         }
-        loadTemplatesFromJsonURL(url, minPriority = 0) {
+        loadTemplatesFromJsonURL(url, minPriority = 0, lastContact = '') {
             let _url = new URL(url);
             let uniqueString = `${_url.origin}${_url.pathname}`;
             // exit if already loaded
@@ -579,14 +675,19 @@
                     // read whitelist. These will be loaded later
                     if (json.whitelist) {
                         for (let i = 0; i < json.whitelist.length; i++) {
-                            this.whitelist.push(json.whitelist[i].url);
+                            let entry = json.whitelist[i];
+                            let contactInfo = json.contact || json.contactInfo || lastContact;
+                            entry.name = entry.name ? `${entry.name}, from: ${contactInfo}` : contactInfo;
+                            this.whitelist.push(json.whitelist[i]);
                         }
                     }
                     // read templates
                     if (json.templates) {
                         for (let i = 0; i < json.templates.length; i++) {
                             if (this.templates.length < this.templatesToLoad) {
-                                this.templates.push(new Template(json.templates[i], json.contact || json.contactInfo, this.canvasElement, minPriority + this.templates.length));
+                                let constructor = (a) => new Template(json.templates[i], json.contact || json.contactInfo || lastContact, a, minPriority + this.templates.length);
+                                this.templateConstructors.push(constructor);
+                                this.templates.push(constructor(this.selectedCanvas));
                             }
                         }
                     }
@@ -606,10 +707,13 @@
                 if (!response.ok) {
                     console.error(`error getting ${serverUrl}/topics, trying again in 10s...`);
                     setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
+                    return false;
                 }
                 return response.json();
             })
-                .then((data) => {
+                .then(async (data) => {
+                if (data == false)
+                    return;
                 let topics = [];
                 data.forEach((topicFromApi) => {
                     if (!topicFromApi.id || !topicFromApi.description) {
@@ -617,13 +721,22 @@
                         return;
                     }
                     let topic = topicFromApi;
-                    topic.forced = isTopLevelTemplate;
+                    if (isTopLevelTemplate) {
+                        topic.forced = true;
+                        removeItem(this.enabledNotifications, `${domain}??${topic.id}`);
+                        this.enabledNotifications.push(`${domain}??${topic.id}`);
+                    }
                     topics.push(topic);
                 });
                 this.notificationTypes.set(domain, topics);
+                if (isTopLevelTemplate) {
+                    let enabledKey = `${window.location.host}_notificationsEnabled`;
+                    await GM.setValue(enabledKey, JSON.stringify(this.enabledNotifications));
+                    this.notificationManager.newNotification("template manager", `You were automatically set to recieve notifications from ${domain} as it's from your address-bar template`);
+                }
                 // actually connecting to the websocket now
                 let wsUrl = new URL('/listen', serverUrl);
-                wsUrl.protocol = wsUrl.protocol == 'https' ? 'wss' : 'ws';
+                wsUrl.protocol = wsUrl.protocol == 'https:' ? 'wss:' : 'ws:';
                 let ws = new WebSocket(wsUrl);
                 ws.addEventListener('open', (_) => {
                     console.log(`successfully connected to websocket for ${serverUrl}`);
@@ -663,8 +776,10 @@
         canReload() {
             return this.lastCacheBust !== this.getCacheBustString();
         }
-        initOrReloadTemplates(forced = false) {
+        initOrReloadTemplates(forced = false, contactInfo = null) {
             var _a, _b;
+            if (contactInfo)
+                this.setContactInfoDisplay(contactInfo);
             if (!this.canReload() && !forced) {
                 // fake a reload
                 for (let i = 0; i < this.templates.length; i++) {
@@ -706,13 +821,15 @@
             return (Date.now() + averageDiff) / 1000;
         }
         update() {
+            this.selectBestCanvas();
             let cs = this.currentSeconds();
             for (let i = 0; i < this.templates.length; i++)
                 this.templates[i].update(this.percentage, this.randomness, cs);
             if (this.templates.length < this.templatesToLoad) {
                 for (let i = 0; i < this.whitelist.length; i++) {
                     // yes this calls all whitelist all the time but the load will cancel if already loaded
-                    this.loadTemplatesFromJsonURL(this.whitelist[i], i * this.templatesToLoad);
+                    let entry = this.whitelist[i];
+                    this.loadTemplatesFromJsonURL(entry.url, i * this.templatesToLoad, entry.name);
                 }
             }
         }
@@ -797,6 +914,7 @@
             this.templateLinksWrapper = document.createElement("div");
             this.notificationsWrapper = document.createElement("div");
             this.reloadTemplatesWhenClosed = false;
+            this.contactInfoDisabled = false;
             this.templateLinksWrapper.className = "settingsWrapper";
             this.templateLinksWrapper.id = "templateLinksWrapper";
             this.notificationsWrapper.className = "settingsWrapper";
@@ -813,11 +931,16 @@
                     this.close();
                 }
             });
+            this.overlay.addEventListener("wheel", (ev) => {
+                ev.preventDefault();
+                var direction = (ev.deltaY > 0) ? 1 : -1;
+                this.overlay.scrollTop += direction * 100;
+            });
             let div = document.createElement('div');
             div.className = "settingsWrapper";
             div.appendChild(createLabel(".json Template settings"));
             div.appendChild(document.createElement('br'));
-            div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates()));
+            div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates(false, this.contactInfoDisabled)));
             div.appendChild(document.createElement('br'));
             div.appendChild(createSlider("Templates to load", "4", (n) => {
                 manager.templatesToLoad = (n + 1) * MAX_TEMPLATES / 5;
@@ -838,6 +961,7 @@
             div.appendChild(document.createElement('br'));
             div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
                 manager.setContactInfoDisplay(a);
+                this.contactInfoDisabled = a;
             }));
             div.appendChild(document.createElement('br'));
             this.overlay.appendChild(div);
@@ -853,7 +977,7 @@
             this.overlay.style.opacity = "0";
             this.overlay.style.pointerEvents = "none";
             if (this.reloadTemplatesWhenClosed) {
-                this.manager.initOrReloadTemplates(true);
+                this.manager.initOrReloadTemplates(true, this.contactInfoDisabled);
                 this.reloadTemplatesWhenClosed = false;
             }
         }
@@ -942,6 +1066,9 @@
     let SLIDERS_SVG = '<button><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Pro 6.3.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license (Commercial License) Copyright 2023 Fonticons, Inc. --><path d="M0 416c0-17.7 14.3-32 32-32l54.7 0c12.3-28.3 40.5-48 73.3-48s61 19.7 73.3 48L480 384c17.7 0 32 14.3 32 32s-14.3 32-32 32l-246.7 0c-12.3 28.3-40.5 48-73.3 48s-61-19.7-73.3-48L32 448c-17.7 0-32-14.3-32-32zm192 0a32 32 0 1 0 -64 0 32 32 0 1 0 64 0zM384 256a32 32 0 1 0 -64 0 32 32 0 1 0 64 0zm-32-80c32.8 0 61 19.7 73.3 48l54.7 0c17.7 0 32 14.3 32 32s-14.3 32-32 32l-54.7 0c-12.3 28.3-40.5 48-73.3 48s-61-19.7-73.3-48L32 288c-17.7 0-32-14.3-32-32s14.3-32 32-32l246.7 0c12.3-28.3 40.5-48 73.3-48zM192 64a32 32 0 1 0 0 64 32 32 0 1 0 0-64zm73.3 0L480 64c17.7 0 32 14.3 32 32s-14.3 32-32 32l-214.7 0c-12.3 28.3-40.5 48-73.3 48s-61-19.7-73.3-48L32 128C14.3 128 0 113.7 0 96S14.3 64 32 64l86.7 0C131 35.7 159.2 16 192 16s61 19.7 73.3 48z"/></svg></button>';
     async function init(manager) {
         let settings = new Settings(manager);
+        while (window.innerWidth === 0 || window.innerHeight === 0) {
+            await sleep(1000);
+        }
         let xKey = `${window.location.host}_settingsX`;
         let yKey = `${window.location.host}_settingsY`;
         let GMx = await GM.getValue(xKey, null) || 10;
@@ -1017,26 +1144,7 @@
     }
 
     let jsontemplate;
-    let canvasElement;
-    function findCanvas(element) {
-        if (element instanceof HTMLCanvasElement) {
-            console.log('found canvas', element, window.location.href);
-            if (!canvasElement) {
-                canvasElement = element;
-            }
-            else if (element.width * element.height > canvasElement.width * canvasElement.height) {
-                canvasElement = element;
-            }
-        }
-        // find in Shadow DOM elements
-        if (element instanceof HTMLElement && element.shadowRoot) {
-            findCanvas(element.shadowRoot);
-        }
-        // find in children
-        for (let c = 0; c < element.children.length; c++) {
-            findCanvas(element.children[c]);
-        }
-    }
+    let canvasElements; // FIXME: This should probably be a list and the user can just select the correct one manually
     function topWindow() {
         console.log("top window code for", window.location.href);
         GM.setValue('canvasFound', false);
@@ -1047,7 +1155,7 @@
     async function canvasWindow() {
         console.log("canvas code for", window.location.href);
         let sleep$1 = 0;
-        while (!canvasElement) {
+        while (!canvasElements) {
             if (await GM.getValue('canvasFound', false) && !windowIsEmbedded()) {
                 console.log('canvas found by iframe');
                 return;
@@ -1055,13 +1163,13 @@
             await sleep(1000 * sleep$1);
             sleep$1++;
             console.log("trying to find canvas");
-            findCanvas(document.documentElement);
+            canvasElements = findElementOfType(document.documentElement, HTMLCanvasElement);
         }
         GM.setValue('canvasFound', true);
         sleep$1 = 0;
         while (true) {
             if (jsontemplate) {
-                runCanvas(jsontemplate, canvasElement);
+                runCanvas(jsontemplate, canvasElements);
                 break;
             }
             else if (windowIsEmbedded()) {
@@ -1071,8 +1179,8 @@
             sleep$1++;
         }
     }
-    function runCanvas(jsontemplate, canvasElement) {
-        let manager = new TemplateManager(canvasElement, jsontemplate);
+    function runCanvas(jsontemplate, canvasElements) {
+        let manager = new TemplateManager(canvasElements, jsontemplate);
         init(manager);
         window.setInterval(() => {
             manager.update();

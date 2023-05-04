@@ -16,20 +16,9 @@ interface TemplateParams {
     looping: boolean | undefined
 }
 
-interface NamedURL {
+export interface NamedURL {
     name: string | undefined
     url: string
-}
-
-export interface NotificationTopic {
-    id: string
-    description: string
-    forced: boolean;
-}
-
-export interface NotificationServer {
-    url: string
-    topics: NotificationTopic[]
 }
 
 export interface JsonParams {
@@ -58,6 +47,7 @@ export class Template {
     imageLoader = new Image()
     canvasElement = document.createElement('canvas')
     contactElement: HTMLDivElement | undefined
+    initialContactCSS: CSSStyleDeclaration | undefined
 
     blinkingPeriodMillis: number
     animationDuration: number;
@@ -113,25 +103,33 @@ export class Template {
         })
 
         // add contact info container
+        this.contactX = Math.round(this.x / 5) * 5
+        this.contactY = Math.round(this.y / 5) * 5
         if (contact) {
-            let contactX = Math.round(this.x / 5) * 5
-            let contactY = Math.round(this.y / 5) * 5
             let checkingCoords = true
             while (checkingCoords) {
                 checkingCoords = false
                 let contactInfos = this.globalCanvas.parentElement!.querySelectorAll('.iHasContactInfo')
                 for (let i = 0; i < contactInfos.length; i++) {
                     let child = contactInfos[i] as HTMLElement
-                    if (child && parseInt(child.style.left) === contactX && parseInt(child.style.top) === contactY) {
+                    let childX = parseInt(child.getAttribute('contactX') ?? '0')
+                    let childY = parseInt(child.getAttribute('contactY') ?? '0')
+                    if (
+                        child
+                        && childX >= this.contactX && childX <= this.contactX + 50
+                        && childY === this.contactY
+                    ) {
                         checkingCoords = true
-                        contactX += 5
-                        contactY += 5
+                        this.contactX += 5
+                        this.contactY += 5
                     }
                 }
             }
             this.contactElement = document.createElement('div')
-            this.contactElement.style.left = `${contactX}px`;
-            this.contactElement.style.top = `${contactY}px`;
+            this.contactElement.setAttribute('contactX', this.contactX.toString())
+            this.contactElement.setAttribute('contactY', this.contactY.toString())
+            this.contactElement.style.left = `${this.contactX}px`;
+            this.contactElement.style.top = `${this.contactY}px`;
 
             let contactPriority = Math.round(Number.MIN_SAFE_INTEGER / 100 + priority)
             this.contactElement.setAttribute('priority', contactPriority.toString())
@@ -143,34 +141,50 @@ export class Template {
             }
             this.contactElement.appendChild(document.createTextNode(contact))
             this.insertPriorityElement(this.contactElement)
+            this.initialContactCSS = getComputedStyle(this.contactElement)
         }
+    }
 
-        let updateStyle = () => {
-            let css = getComputedStyle(this.globalCanvas)
-            let globalRatio = parseFloat(this.globalCanvas.style.width) / this.globalCanvas.width
-            this.canvasElement.style.width = `${this.frameWidth! * globalRatio}px`
-            this.canvasElement.style.height = `${this.frameHeight! * globalRatio}px`
-            if (css.left !== "auto")
-                this.canvasElement.style.left = `calc(${this.x * globalRatio}px + ${css.left})`
+    contactX: number | undefined
+    contactY: number | undefined
+
+    updateStyle(globalRatio: number, left: string, top: string, translate: string, transform: string, zIndex: string) {
+        this.canvasElement.style.width = `${this.frameWidth! * globalRatio}px`
+        this.canvasElement.style.height = `${this.frameHeight! * globalRatio}px`
+        if (left !== "auto")
+            this.canvasElement.style.left = `calc(${this.x * globalRatio}px + ${left})`
+        else
+            this.canvasElement.style.left = `${this.x * globalRatio}px`
+        if (top !== "auto")
+            this.canvasElement.style.top = `calc(${this.y * globalRatio}px + ${top})`
+        else
+            this.canvasElement.style.top = `${this.y * globalRatio}px`
+        this.canvasElement.style.translate = translate
+        this.canvasElement.style.transform = transform
+        this.canvasElement.style.zIndex = zIndex
+
+        if (this.contactElement) {
+            if (left !== "auto")
+                this.contactElement.style.left = `calc(${this.contactX! * globalRatio}px + ${left})`
             else
-                this.canvasElement.style.left = `${this.x * globalRatio}px`
-            if (css.right !== "auto")
-                this.canvasElement.style.top = `calc(${this.y * globalRatio}px + ${css.top})`
+                this.contactElement.style.left = `${this.contactX! * globalRatio}px`
+            if (top !== "auto")
+                this.contactElement.style.top = `calc(${this.contactY! * globalRatio}px + ${top})`
             else
-                this.canvasElement.style.top = `${this.y * globalRatio}px`
-            this.canvasElement.style.translate = css.translate
-            this.canvasElement.style.transform = css.transform
-            this.canvasElement.style.zIndex = (parseInt(css.zIndex) + priority).toString()
+                this.contactElement.style.top = `${this.contactY! * globalRatio}px`
+            this.contactElement.style.maxWidth = `${30 * globalRatio}px`
+            this.contactElement.style.padding = `${globalRatio}px`
+            this.contactElement.style.fontSize = `${globalRatio}px`
+            this.contactElement.style.translate = translate
+            this.contactElement.style.transform = transform
+            this.contactElement.style.zIndex = zIndex
         }
-        // observe changes in the canvas
-        let observer = new MutationObserver(updateStyle)
-        observer.observe(globalCanvas, { attributes: true })
-        updateStyle()
     }
 
     setContactInfoDisplay(enabled: boolean) {
         if (this.contactElement) {
             this.contactElement.style.opacity = enabled ? "1" : "0";
+            this.contactElement.style.pointerEvents = enabled ? "auto" : "none";
         }
     }
 

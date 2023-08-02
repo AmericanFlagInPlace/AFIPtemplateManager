@@ -1,4 +1,4 @@
-import { MAX_TEMPLATES } from "../constants";
+import { MAX_TEMPLATES, SETTINGS_CSS } from "../constants";
 import { TemplateManager } from "../templateManager";
 import * as utils from "../utils";
 
@@ -16,14 +16,14 @@ function createButton(text: string, callback: () => void) {
     return button;
 }
 
-function createTextInput(buttonText: string, placeholder: string, callback: (value: string) => void) {
+function createTextInput(buttonText: string, placeholder: string, callback: (value: string, input: HTMLInputElement) => void) {
     let div = document.createElement("div")
     let textInput = document.createElement("input")
     textInput.type = "text"
     textInput.placeholder = placeholder
     textInput.className = "settingsTextInput"
     let button = createButton(buttonText, () => {
-        callback(textInput.value)
+        callback(textInput.value, textInput)
     })
     div.appendChild(textInput)
     div.appendChild(button)
@@ -77,12 +77,16 @@ function createBoldCheckbox(boldText: string, regularText: string, checked: bool
 
 
 export class Settings {
-    overlay = document.createElement("div");
-    templateLinksWrapper = document.createElement("div");
-    notificationsWrapper = document.createElement("div");
-    manager: TemplateManager;
-    reloadTemplatesWhenClosed = false;
-    contactInfoDisabled = false;
+    overlay = document.createElement("div")
+    templateLinksWrapper = document.createElement("div")
+    notificationsWrapper = document.createElement("div")
+    previewModeCheckbox: HTMLDivElement | undefined
+    manager: TemplateManager
+    reloadTemplatesWhenClosed = false
+    contactInfoEnabled = false
+    previewModeEnabled = false
+    hideTemplate = false
+
     constructor(manager: TemplateManager) {
         this.templateLinksWrapper.className = "settingsWrapper"
         this.templateLinksWrapper.id = "templateLinksWrapper"
@@ -93,27 +97,13 @@ export class Settings {
 
         this.overlay.id = "settingsOverlay"
         this.overlay.style.opacity = "0"
-        this.overlay.onclick = (ev) => {
-            if (ev.target === ev.currentTarget)
-                this.close();
-        }
-        window.addEventListener("keydown", (ev) => {
-            if (ev.key === "Escape") {
-                this.close();
-            }
-        })
-        this.overlay.addEventListener("wheel", (ev) => {
-            ev.preventDefault();
-            var direction = (ev.deltaY > 0) ? 1 : -1;
-            this.overlay.scrollTop += direction * 100;
-        })
 
         let div = document.createElement('div')
         div.className = "settingsWrapper"
 
-        div.appendChild(createLabel(".json Template settings"))
+        div.appendChild(createLabel(".json Template settings - v" + GM.info.script.version))
         div.appendChild(document.createElement('br'))
-        div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates(false, this.contactInfoDisabled)))
+        div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates(false, this.contactInfoEnabled)))
         div.appendChild(document.createElement('br'))
         div.appendChild(createSlider("Templates to load", "4", (n) => {
             manager.templatesToLoad = (n + 1) * MAX_TEMPLATES / 5
@@ -130,18 +120,65 @@ export class Settings {
         div.appendChild(document.createElement('br'))
         div.appendChild(createSlider("Dither amount", "1", (n) => {
             manager.percentage = 1 / (n / 10 + 1)
+
+            if(this.previewModeEnabled){
+                // disable 'preview template in full', because changing percentage
+                // overrides the template rendering anyway
+                this.previewModeEnabled = false
+                const previewModeInput = this.previewModeCheckbox?.children[0] as HTMLInputElement
+                
+                if(previewModeInput)
+                    previewModeInput.checked = false
+            }
         }))
         div.appendChild(document.createElement('br'))
-        div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
+        div.appendChild(createBoldCheckbox('', "Show contact info besides templates", this.contactInfoEnabled, (a) => {
             manager.setContactInfoDisplay(a)
-            this.contactInfoDisabled = a
+            this.contactInfoEnabled = a
         }))
+        this.previewModeCheckbox = div.appendChild(createBoldCheckbox('', "Preview template in full", this.previewModeEnabled, (a) => {
+            manager.setPreviewMode(a)
+            this.previewModeEnabled = a
+        }))
+        div.appendChild(createBoldCheckbox('', "Hide template", this.hideTemplate, (a) => {
+            manager.hideTemplate(a)
+            this.hideTemplate = a
+        }))
+        this.populateSoundOptions(div);
         div.appendChild(document.createElement('br'))
 
+        let clickHandler = document.createElement('div')
+        clickHandler.style.width = '100vw'
+        clickHandler.style.height = '100vh'
+        clickHandler.style.position = 'absolute'
+        clickHandler.style.left = '-0.1px'
+        clickHandler.style.right = '-0.1px'
+        clickHandler.style.overflowY = 'auto'
 
-        this.overlay.appendChild(div)
-        this.overlay.appendChild(this.templateLinksWrapper)
-        this.overlay.appendChild(this.notificationsWrapper)
+        clickHandler.addEventListener("wheel", (ev) => {
+            ev.preventDefault();
+            var direction = (ev.deltaY > 0) ? 1 : -1;
+            clickHandler.scrollTop += direction * 100;
+        })
+        clickHandler.onclick = (ev) => {
+            if (ev.target === ev.currentTarget)
+                this.close();
+        }
+        window.addEventListener("keydown", (ev) => {
+            if (ev.key === "Escape") {
+                this.close();
+            }
+        })
+
+        this.overlay.attachShadow({ mode: 'open' })
+        let globalStyle = document.createElement("style")
+        globalStyle.innerHTML = SETTINGS_CSS;
+
+        this.overlay.shadowRoot!.appendChild(globalStyle)
+        this.overlay.shadowRoot!.appendChild(clickHandler)
+        clickHandler.appendChild(div)
+        clickHandler.appendChild(this.templateLinksWrapper)
+        clickHandler.appendChild(this.notificationsWrapper)
     }
 
     open() {
@@ -154,7 +191,7 @@ export class Settings {
         this.overlay.style.opacity = "0"
         this.overlay.style.pointerEvents = "none"
         if (this.reloadTemplatesWhenClosed) {
-            this.manager.initOrReloadTemplates(true, this.contactInfoDisabled)
+            this.manager.initOrReloadTemplates(true, this.contactInfoEnabled)
             this.reloadTemplatesWhenClosed = false
         }
     }
@@ -177,6 +214,41 @@ export class Settings {
         this.populateNotifications()
     }
 
+    populateSoundOptions(div: HTMLDivElement) {
+        const audioDiv = document.createElement('div');
+
+        div.appendChild(document.createElement('br'));
+        div.appendChild(audioDiv);
+
+        this.manager.notificationManager.getNotificationSound()
+        .then((value) => {
+            let linkLabel = document.createElement('label');
+            let updateLinkLabel = (url: string) => {
+                linkLabel.innerHTML = `Current sound: <a target="_blank" rel="noopener noreferrer" href="${url}">${url}</a>`;
+            };
+            updateLinkLabel(value);
+            audioDiv.appendChild(createLabel('Set new notification sound:'));
+            audioDiv.appendChild(document.createElement('br'));
+            audioDiv.appendChild(linkLabel);
+            audioDiv.appendChild(createTextInput('Apply', 'Sound URL', (newSound, input) => {
+                if (!newSound.trim().length) {
+                    return;
+                }
+
+                this.manager.notificationManager.setNotificationSound(newSound)
+                .then(() => {
+                    this.manager.notificationManager.newNotification('settings', 'Applied new sound!');
+
+                    input.value = '';
+                    updateLinkLabel(newSound);
+                })
+                .catch((err) => {
+                    this.manager.notificationManager.newNotification('settings', 'Failed to apply new sound:\n' + err);
+                });
+            }));
+        });
+    }
+
     populateTemplateLinks() {
         while (this.templateLinksWrapper.children.length) {
             this.templateLinksWrapper.children[0].remove()
@@ -195,6 +267,7 @@ export class Settings {
             this.templateLinksWrapper.appendChild(templateAdder)
             if (templates.length > 0) {
                 this.templateLinksWrapper.appendChild(createLabel("Click to remove template from always loading"))
+                this.templateLinksWrapper.appendChild(document.createElement('br'))
             }
             for (let i = 0; i < templates.length; i++) {
                 let button = createButton(templates[i], async () => {

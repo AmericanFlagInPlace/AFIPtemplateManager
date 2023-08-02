@@ -1,4 +1,4 @@
-import { NO_JSON_TEMPLATE_IN_PARAMS, UPDATE_PERIOD_MILLIS } from "./constants";
+import { NO_JSON_TEMPLATE_IN_PARAMS, UPDATE_PERIOD_MILLIS, TEMPLATE_RELOAD_INTERVAL } from "./constants";
 import * as reddit from "./reddit";
 import { TemplateManager } from "./templateManager";
 import * as utils from "./utils";
@@ -16,9 +16,14 @@ function topWindow() {
 }
 
 async function canvasWindow() {
+    while (document.readyState !== 'complete') {
+        console.log("Template manager sleeping for 1 second because document isn't ready yet.")
+        await utils.sleep(1000)
+    }
+
     console.log("canvas code for", window.location.href)
     let sleep = 0;
-    while (!canvasElements) {
+    while (canvasElements === undefined || canvasElements.length === 0) {
         if (await GM.getValue('canvasFound', false) && !utils.windowIsEmbedded()) {
             console.log('canvas found by iframe')
             return;
@@ -42,12 +47,16 @@ async function canvasWindow() {
     }
 }
 
-function runCanvas(jsontemplate: string, canvasElements: HTMLCanvasElement[]) {
+async function runCanvas(jsontemplate: string, canvasElements: HTMLCanvasElement[]) {
     let manager = new TemplateManager(canvasElements, jsontemplate)
     settings.init(manager)
     window.setInterval(() => {
         manager.update()
     }, UPDATE_PERIOD_MILLIS);
+    window.setInterval(() => {
+        console.log("Reloading template...");
+        manager.initOrReloadTemplates(false, null)
+    }, TEMPLATE_RELOAD_INTERVAL);
     GM.setValue('jsontemplate', '')
 }
 

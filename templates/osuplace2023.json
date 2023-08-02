@@ -1,0 +1,75 @@
+{
+    "faction": "/r/osuplace",
+    "contact": "discord.osu.place - littleendu#0 or emi.x#0",
+    "notifications": "https://broadcaster.osu.place",
+    "templates": [
+        {
+            "name": "osu! logo; Bad Apple!! text; Border;",
+            "sources": [
+                "https://cdn.discordapp.com/attachments/364902074858602498/1121528323537895485/osu_logo.png"
+            ],
+            "priorityMaskSources": [
+                "https://cdn.discordapp.com/attachments/958285020433375252/1121581323321094225/osu_mask.png"
+            ],
+            "x": 648,
+            "y": 672
+        },
+        {
+            "name": "bad apple placeholder",
+            "sources": [
+                "https://i.imgur.com/hMWmsvu.png"
+            ],
+            "x": 662,
+            "y": 673
+        },
+        {
+            "name": "bad apple video",
+            "sources": [
+                "https://cdn.discordapp.com/attachments/364902074858602498/1109838633478934599/uploaded-colordata-index.png",
+                "https://i.imgur.com/yFRf2Kt.png",
+                "https://files.catbox.moe/ruyu9c.png"
+            ],
+            "priorityMaskSources": [
+                "https://cdn.discordapp.com/attachments/364902074858602498/1109845838743740556/uploaded-priority-mask-final-dither-index.png",
+                "https://i.imgur.com/Hx8fbHm.png",
+                "https://files.catbox.moe/vdh1y2.png"
+            ],
+            "x": -662,
+            "y": -673,
+            "frameWidth": 40,
+            "frameHeight": 30,
+            "frameRate": 43,
+            "frameCount": 6605,
+            "startTime": 1687525200,
+            "looping": false
+        }
+    ],
+    "whitelist": [
+        {
+            "name": "Digital Clock",
+            "url": "https://gist.githubusercontent.com/LittleEndu/318ed120e92150b2a45690bd2de672d1/raw/clock.json"
+        },
+        {
+            "name": "Starwars",
+            "url": "https://rentry.org/starwars_place/raw"
+        },
+        {
+            "name": "touhou",
+            "url": "https://rentry.org/touhouplace2023/raw"
+        },
+        {
+            "name": "Foxhole",
+            "url": "https://rentry.co/FoxholeTemplate/raw"
+        }
+    ],
+    "blacklist": [
+        {
+            "name": "old r/osuplace",
+            "url": "https://rentry.org/osuplace2023/raw"
+        },
+        {
+            "name": "old r/osuplace",
+            "url": "https://rentry.co/osuplace2023/raw"
+        }
+    ]
+}

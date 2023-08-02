@@ -1,10 +1,13 @@
 import * as utils from './utils';
 import * as cf from './canvasFunctions'
 import { UPDATE_PERIOD_MILLIS, SECONDS_SPENT_BLINKING, AMOUNT_OF_BLINKING, ANIMATION_DEFAULT_PERCENTAGE } from './constants';
+import { ImageLoadHelper } from './imageLoadHelper';
+import { ImageDataWithCoordinates } from './canvasFunctions';
 
 interface TemplateParams {
     name: string | undefined
     sources: string[];
+    priorityMaskSources: string[];
     x: number
     y: number
     frameWidth: number | undefined
@@ -33,6 +36,7 @@ export interface JsonParams {
 export class Template {
     name: string | undefined
     sources: string[];
+    priorityMaskSources: string[] | undefined;
     x: number
     y: number
     frameWidth: number | undefined
@@ -44,8 +48,13 @@ export class Template {
     priority: number
 
     globalCanvas: HTMLCanvasElement
-    imageLoader = new Image()
+    imageLoader: ImageLoadHelper;
+    priorityMaskLoader: ImageLoadHelper;
     canvasElement = document.createElement('canvas')
+    fullImageData: ImageData | undefined;
+    ditheredData: ImageData | undefined;
+    frameData: ImageData | null | undefined;
+    priorityData: ImageData | null | undefined;
     contactElement: HTMLDivElement | undefined
     initialContactCSS: CSSStyleDeclaration | undefined
 
@@ -56,6 +65,7 @@ export class Template {
         // assign params
         this.name = params.name
         this.sources = params.sources
+        this.priorityMaskSources = params.priorityMaskSources
         this.x = params.x
         this.y = params.y
         this.frameWidth = params.frameWidth
@@ -73,34 +83,9 @@ export class Template {
         this.blinkingPeriodMillis = Math.floor(period / UPDATE_PERIOD_MILLIS) * UPDATE_PERIOD_MILLIS
         this.animationDuration = (this.frameCount * this.frameSpeed)
 
-        // initialize image loader
-        // set image loader style
-        this.imageLoader.style.position = 'absolute';
-        this.imageLoader.style.top = '0';
-        this.imageLoader.style.left = '0';
-        this.imageLoader.style.width = '1px';
-        this.imageLoader.style.height = '1px';
-        this.imageLoader.style.opacity = `${Number.MIN_VALUE}`;
-        this.imageLoader.style.pointerEvents = 'none';
-        document.body.appendChild(this.imageLoader) // firefox doesn't seem to load images outside of DOM
-
-        // set image loader event listeners
-        this.imageLoader.addEventListener('load', () => {
-            if (!this.frameWidth || !this.frameHeight) {
-                this.frameWidth = this.imageLoader.naturalWidth
-                this.frameHeight = this.imageLoader.naturalHeight
-            }
-            if (!this.name) {
-                this.name = utils.getFileStemFromUrl(this.imageLoader.src)
-            }
-            this.initCanvas()
-            this.loading = false
-        })
-        this.imageLoader.addEventListener('error', () => {
-            this.loading = false
-            // assume loading from this source fails
-            this.sources.shift()
-        })
+        //initialize image loaders
+        this.imageLoader = new ImageLoadHelper(this.name, this.sources)
+        this.priorityMaskLoader = new ImageLoadHelper(this.name, this.priorityMaskSources)
 
         // add contact info container
         this.contactX = Math.round(this.x / 5) * 5
@@ -114,14 +99,18 @@ export class Template {
                     let child = contactInfos[i] as HTMLElement
                     let childX = parseInt(child.getAttribute('contactX') ?? '0')
                     let childY = parseInt(child.getAttribute('contactY') ?? '0')
+                    let thisRight = this.contactX + 35
+                    let childRight = childX + 35
+                    let collision = this.contactX <= childRight && this.contactX >= childX || thisRight <= childRight && thisRight >= childX
                     if (
                         child
-                        && childX >= this.contactX && childX <= this.contactX + 50
-                        && childY === this.contactY
+                        && collision
+                        && Math.round(childY) === Math.round(this.contactY)
                     ) {
                         checkingCoords = true
                         this.contactX += 5
                         this.contactY += 5
+                        break
                     }
                 }
             }
@@ -188,22 +177,15 @@ export class Template {
         }
     }
 
-    loading = false
-    tryLoadSource() {
-        if (this.loading) return;
-        if (this.sources.length === 0) return;
-        this.loading = true
-        let candidateSource = this.sources[0]
-        let displayName = this.name ? this.name + ': ' : ''
-        console.log(`${displayName}trying to load ${candidateSource}`)
-        GM.xmlHttpRequest({
-            method: 'GET',
-            url: candidateSource,
-            responseType: 'blob',
-            onload: (response) => {
-                this.imageLoader.src = URL.createObjectURL(response.response)
-            }
-        })
+    setPreviewMode(enabled: boolean) {
+        let data = enabled ? this.fullImageData! : this.ditheredData!
+        this.canvasElement.width = data.width
+        this.canvasElement.height = data.height
+        this.canvasElement.getContext('2d')?.putImageData(data, 0, 0)
+    }
+
+    hideTemplate(enabled: boolean) {
+        this.canvasElement.style.opacity = enabled ? "0" : "1";
     }
 
     getCurrentFrameIndex(currentSeconds: number) {
@@ -231,17 +213,27 @@ export class Template {
         }
     }
 
-    initCanvas() {
-        this.canvasElement.style.position = 'absolute'
-        this.canvasElement.style.top = `${this.y}px`;
-        this.canvasElement.style.left = `${this.x}px`;
-        this.canvasElement.style.width = `${this.frameWidth}px`;
-        this.canvasElement.style.height = `${this.frameHeight}px`;
-        this.canvasElement.style.pointerEvents = 'none'
-        this.canvasElement.style.imageRendering = 'pixelated'
-        this.canvasElement.setAttribute('priority', this.priority.toString())
+    needsCanvasInitialization = true;
 
-        this.insertPriorityElement(this.canvasElement)
+    initCanvasIfNeeded(image: HTMLImageElement) {
+        if (this.needsCanvasInitialization) {
+            if (!this.frameWidth || !this.frameHeight) {
+                this.frameWidth = image.naturalWidth
+                this.frameHeight = image.naturalHeight
+            }
+
+            this.canvasElement.style.position = 'absolute'
+            this.canvasElement.style.top = `${this.y}px`;
+            this.canvasElement.style.left = `${this.x}px`;
+            this.canvasElement.style.width = `${this.frameWidth}px`;
+            this.canvasElement.style.height = `${this.frameHeight}px`;
+            this.canvasElement.style.pointerEvents = 'none'
+            this.canvasElement.style.imageRendering = 'pixelated'
+            this.canvasElement.setAttribute('priority', this.priority.toString())
+
+            this.insertPriorityElement(this.canvasElement)
+            this.needsCanvasInitialization = false
+        }
     }
 
     currentFrame: number | undefined
@@ -252,17 +244,18 @@ export class Template {
         return (this.startTime + (n || this.currentFrame || 0) * this.frameSpeed) % this.animationDuration
     }
 
-    update(percentage: number, randomness: number, currentSeconds: number) {
+    async update(higherTemplates: Template[], percentage: number, randomness: number, currentSeconds: number) {
         // return if the animation is finished
         if (!this.looping && currentSeconds > this.startTime + this.frameSpeed * this.frameCount) {
             return;
         }
 
+        let image = this.imageLoader.getImage()
+        let priorityMask = this.priorityMaskLoader.getImage()
         // return if image isn't loaded yet
-        if (!this.imageLoader.complete || !this.imageLoader.src) {
-            this.tryLoadSource()
-            return;
-        }
+        if (!image) return;
+        // else initialize canvas
+        this.initCanvasIfNeeded(image)
 
         // return if canvas not initialized (works because last step of canvas initialization is inserting it to DOM)
         if (!this.canvasElement.isConnected) {
@@ -280,13 +273,31 @@ export class Template {
         }
         // update canvas if necessary
         if (this.currentFrame !== frameIndex || this.currentPercentage !== percentage || this.currentRandomness !== randomness) {
-            let frameData = cf.extractFrame(this.imageLoader, this.frameWidth!, this.frameHeight!, frameIndex)
-            if (!frameData) return;
-            let ditheredData = cf.ditherData(frameData, randomness, percentage, this.x, this.y, this.frameWidth!, this.frameHeight!)
+            if (!this.frameData || this.frameCount > 1)
+                this.frameData = cf.extractFrame(image, this.frameWidth!, this.frameHeight!, frameIndex)
+            if (!this.frameData) return;
 
-            this.canvasElement.width = ditheredData.width
-            this.canvasElement.height = ditheredData.height
-            this.canvasElement.getContext('2d')?.putImageData(ditheredData, 0, 0)
+            if (priorityMask) {
+                if (!this.priorityData || this.frameCount > 1) {
+                    this.priorityData = cf.extractFrame(priorityMask, this.frameWidth!, this.frameHeight!, frameIndex)
+                }
+            }
+
+            let frameDatas: ImageDataWithCoordinates[] = [];
+            for (let i = 0; i < higherTemplates.length; i++) {
+                let other = higherTemplates[i]
+                if (this.checkCollision(other) && other.frameData)
+                    frameDatas.push({ imagedata: other.frameData, x: this.x - other.x, y: this.y - other.y }) 
+                    // the x, y over here are our coords in relation to the other template
+            }
+            frameDatas.push({ imagedata: this.frameData, x: 0, y: 0 })
+
+            this.fullImageData = frameDatas[frameDatas.length - 1].imagedata
+            this.ditheredData = await cf.ditherData(frameDatas, this.priorityData, randomness, percentage, this.x, this.y, this.frameWidth!, this.frameHeight!)
+
+            this.canvasElement.width = this.ditheredData.width
+            this.canvasElement.height = this.ditheredData.height
+            this.canvasElement.getContext('2d')?.putImageData(this.ditheredData, 0, 0)
         }
 
         // update done
@@ -294,6 +305,24 @@ export class Template {
         this.currentFrame = frameIndex
         this.currentRandomness = randomness
         this.blinking(currentSeconds)
+    }
+
+    checkCollision(other: Template) {
+        if (!this.frameWidth || !this.frameHeight || !other.frameWidth || !other.frameHeight)
+            return false
+        let thisRight = this.x + this.frameWidth
+        let thisBottom = this.y + this.frameHeight
+        let otherRight = other.x + other.frameWidth
+        let otherBottom = other.y + other.frameHeight
+        if (
+            this.x > otherRight ||   // this template is to the right of the other template
+            thisRight < other.x ||   // this template is to the left of the other template
+            this.y > otherBottom ||  // this template is below the other template
+            thisBottom < other.y     // this template is above the other template
+        ) {
+            return false
+        }
+        return true
     }
 
     blinking(currentSeconds: number) {
@@ -311,8 +340,8 @@ export class Template {
     }
 
     destroy() {
-        this.imageLoader.parentElement?.removeChild(this.imageLoader)
-        this.imageLoader = new Image();
+        this.imageLoader.destroy()
+        this.priorityMaskLoader.destroy()
         this.canvasElement.parentElement?.removeChild(this.canvasElement)
         this.canvasElement = document.createElement('canvas')
         this.contactElement?.parentElement?.removeChild(this.contactElement)

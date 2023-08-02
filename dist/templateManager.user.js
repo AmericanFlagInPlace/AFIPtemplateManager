@@ -1,13 +1,8 @@
 
 // ==UserScript==
-// @name			template-manager
-// @version			0.4.8
-// @description		Manages your templates on various canvas games
-// @author			LittleEndu, Mikarific, April
-// @license			MIT
-// @grant			GM.xmlHttpRequest
-// @grant			GM.setValue
-// @grant			GM.getValue
+// @namespace		littleendu.xyz
+// @downloadURL		https://github.com/osuplace/templateManager/raw/main/dist/templateManager.user.js
+// @updateURL		https://github.com/osuplace/templateManager/raw/main/dist/templateManager.user.js
 // @match			https://pxls.space/
 // @match			https://new.reddit.com/r/place/*
 // @match			https://www.reddit.com/r/place/*
@@ -15,9 +10,17 @@
 // @match			https://hot-potato.reddit.com/embed*
 // @match			https://www.twitch.tv/otknetwork/*
 // @match			https://9jjigdr1wlul7fbginbq7h76jg9h3s.ext-twitch.tv/*
-// @namespace		littleendu.xyz
-// @updateURL		https://github.com/osuplace/templateManager/raw/main/dist/templateManager.user.js
-// @downloadURL		https://github.com/osuplace/templateManager/raw/main/dist/templateManager.user.js
+// @match			https://place.ludwig.gg/*
+// @match			https://pixelplace.io/*
+// @grant			GM.xmlHttpRequest
+// @grant			GM.setValue
+// @grant			GM.getValue
+// @connect			*
+// @name			template-manager
+// @version			0.6.4
+// @description		Manages your templates on various canvas games
+// @author			LittleEndu, Mikarific, April
+// @license			MIT
 //
 // Created with love using Gorilla
 // ==/UserScript==
@@ -29,6 +32,7 @@
     const MAX_TEMPLATES = 100;
     const CACHE_BUST_PERIOD = 1000 * 60 * 2;
     const UPDATE_PERIOD_MILLIS = 100;
+    const TEMPLATE_RELOAD_INTERVAL = 1000 * 60 * 5;
     const SECONDS_SPENT_BLINKING = 5;
     const AMOUNT_OF_BLINKING = 11;
     const ANIMATION_DEFAULT_PERCENTAGE = 1 / 3;
@@ -58,7 +62,7 @@
         width: auto;
     }
 `;
-    const GLOBAL_CANVAS_CSS = css `
+    const GLOBAL_CSS = css `
     #osuplaceNotificationContainer {
         width: 200px;
         height: 66%;
@@ -111,24 +115,24 @@
         overflow-y: auto;
         font-size: 14px;
     }
-
-    #settingsOverlay label,
-    #settingsOverlay button{
+`;
+    const SETTINGS_CSS = css `
+    label,
+    button{
         height: auto;
         white-space: normal;
         word-break: break-word;
         text-shadow: -1px -1px 1px #111, 1px 1px 1px #111, -1px 1px 1px #111, 1px -1px 1px #111;
         color: #eee;
     }
-    
-    #settingsOverlay input {
+
+    input {
         width: auto;
         max-width: 100%;
         height: auto;
         color: #eee;
         background-color: #111;
         -webkit-appearance: auto;
-        padding: 5px;
         border-radius: 5px;
         font-size: 14px;
     }
@@ -183,9 +187,8 @@
     function run() {
         let reticuleStyleSetter = setInterval(() => {
             var _a, _b;
-            let embed = document.querySelector("mona-lisa-embed");
-            let camera = (_a = embed === null || embed === void 0 ? void 0 : embed.shadowRoot) === null || _a === void 0 ? void 0 : _a.querySelector("mona-lisa-camera");
-            let preview = camera === null || camera === void 0 ? void 0 : camera.querySelector("mona-lisa-pixel-preview");
+            let embed = document.querySelector('garlic-bread-embed');
+            let preview = (_a = embed === null || embed === void 0 ? void 0 : embed.shadowRoot) === null || _a === void 0 ? void 0 : _a.querySelector('garlic-bread-pixel-preview');
             if (preview) {
                 clearInterval(reticuleStyleSetter);
                 let style = document.createElement('style');
@@ -254,6 +257,7 @@
         return rv;
     }
 
+    const ALPHA_THRESHOLD = 2;
     function extractFrame(image, frameWidth, frameHeight, frameIndex) {
         let canvas = document.createElement('canvas');
         canvas.width = frameWidth;
@@ -267,37 +271,132 @@
         context.drawImage(image, gridX * frameWidth, gridY * frameHeight, frameWidth, frameHeight, 0, 0, frameWidth, frameHeight);
         return context.getImageData(0, 0, frameWidth, frameHeight);
     }
-    function ditherData(imageData, randomness, percentage, x, y, frameWidth, frameHeight) {
+    function getHighestRGBA(datas, x, y) {
+        let lastData = datas[datas.length - 1];
+        for (let i = 0; i < datas.length; i++) {
+            let img = datas[i];
+            let xx = x + img.x;
+            let yy = y + img.y;
+            if (xx < 0 || xx >= img.imagedata.width || yy < 0 || yy >= img.imagedata.height)
+                continue;
+            let index = (yy * img.imagedata.width + xx) * 4;
+            let lastIndex = (y * lastData.imagedata.width + x) * 4;
+            if (img.imagedata.data[index + 3] > ALPHA_THRESHOLD && lastData.imagedata.data[lastIndex + 3] > ALPHA_THRESHOLD) {
+                return { r: img.imagedata.data[index], g: img.imagedata.data[index + 1], b: img.imagedata.data[index + 2], a: img.imagedata.data[index + 3] };
+            }
+        }
+        return { r: 0, g: 0, b: 0, a: 0 };
+    }
+    async function ditherData(imageDatas, priorityData, randomness, percentage, x, y, frameWidth, frameHeight) {
         let rv = new ImageData(frameWidth * 3, frameHeight * 3);
         let m = Math.round(1 / percentage); // which nth pixel should be displayed
         let r = Math.floor(randomness * m); // which nth pixel am I (everyone has different nth pixel)
+        let sleepCounter = 0;
         for (let i = 0; i < frameWidth; i++) {
             for (let j = 0; j < frameHeight; j++) {
+                sleepCounter++;
+                if (sleepCounter % 100 === 0) {
+                    await sleep(0.1);
+                }
+                let rgba = getHighestRGBA(imageDatas, i, j);
+                if (rgba.a < ALPHA_THRESHOLD)
+                    continue;
                 let imageIndex = (j * frameWidth + i) * 4;
                 let middlePixelIndex = ((j * 3 + 1) * rv.width + i * 3 + 1) * 4;
-                let alpha = imageData.data[imageIndex + 3];
+                let alpha = priorityData ? priorityData.data[imageIndex] : rgba.a;
                 let p = percentage > 0.99 ? 1 : Math.ceil(m / (alpha / 200));
                 if (negativeSafeModulo(i + x + (j + y) * 2 + r, p) !== 0) {
                     continue;
                 }
-                rv.data[middlePixelIndex] = imageData.data[imageIndex];
-                rv.data[middlePixelIndex + 1] = imageData.data[imageIndex + 1];
-                rv.data[middlePixelIndex + 2] = imageData.data[imageIndex + 2];
-                rv.data[middlePixelIndex + 3] = alpha > 2 ? 255 : 0;
+                rv.data[middlePixelIndex] = rgba.r;
+                rv.data[middlePixelIndex + 1] = rgba.g;
+                rv.data[middlePixelIndex + 2] = rgba.b;
+                rv.data[middlePixelIndex + 3] = alpha > ALPHA_THRESHOLD ? 255 : 0;
             }
         }
         return rv;
     }
 
+    class ImageLoadHelper {
+        constructor(name, sources) {
+            this.imageLoader = new Image();
+            this.imageBitmap = undefined;
+            this.loading = false;
+            this.name = name;
+            this.sources = sources || [];
+            if (this.sources.length === 0)
+                return; // do not attach imageLoader to DOM
+            this.imageLoader.style.position = 'absolute';
+            this.imageLoader.style.top = '0';
+            this.imageLoader.style.left = '0';
+            this.imageLoader.style.width = '1px';
+            this.imageLoader.style.height = '1px';
+            this.imageLoader.style.opacity = `${Number.MIN_VALUE}`;
+            this.imageLoader.style.pointerEvents = 'none';
+            document.body.appendChild(this.imageLoader); // firefox doesn't seem to load images outside of DOM
+            // set image loader event listeners
+            this.imageLoader.addEventListener('load', () => {
+                if (!this.name) {
+                    this.name = getFileStemFromUrl(this.imageLoader.src);
+                }
+                this.loading = false;
+            });
+            this.imageLoader.addEventListener('error', () => {
+                this.loading = false;
+                // assume loading from this source fails
+                this.sources.shift();
+            });
+            this.tryLoadSource();
+        }
+        tryLoadSource() {
+            if (this.loading)
+                return;
+            if (this.sources.length === 0)
+                return;
+            this.loading = true;
+            let candidateSource = this.sources[0];
+            let displayName = this.name ? this.name + ': ' : '';
+            console.log(`${displayName}trying to load ${candidateSource}`);
+            GM.xmlHttpRequest({
+                method: 'GET',
+                url: candidateSource,
+                responseType: 'blob',
+                onload: (response) => {
+                    if (response.status === 200) {
+                        let a = new FileReader();
+                        a.onload = (e) => {
+                            this.imageLoader.src = e.target.result.toString();
+                        };
+                        a.readAsDataURL(response.response);
+                    }
+                    else
+                        this.sources.shift();
+                }
+            });
+        }
+        getImage() {
+            if (!this.imageLoader.complete || !this.imageLoader.src) {
+                this.tryLoadSource();
+                return;
+            }
+            return this.imageLoader;
+        }
+        destroy() {
+            var _a;
+            (_a = this.imageLoader.parentElement) === null || _a === void 0 ? void 0 : _a.removeChild(this.imageLoader);
+            this.imageLoader = new Image();
+        }
+    }
+
     class Template {
         constructor(params, contact, globalCanvas, priority) {
             var _a, _b;
-            this.imageLoader = new Image();
             this.canvasElement = document.createElement('canvas');
-            this.loading = false;
+            this.needsCanvasInitialization = true;
             // assign params
             this.name = params.name;
             this.sources = params.sources;
+            this.priorityMaskSources = params.priorityMaskSources;
             this.x = params.x;
             this.y = params.y;
             this.frameWidth = params.frameWidth;
@@ -313,33 +412,9 @@
             let period = SECONDS_SPENT_BLINKING * 1000 / AMOUNT_OF_BLINKING;
             this.blinkingPeriodMillis = Math.floor(period / UPDATE_PERIOD_MILLIS) * UPDATE_PERIOD_MILLIS;
             this.animationDuration = (this.frameCount * this.frameSpeed);
-            // initialize image loader
-            // set image loader style
-            this.imageLoader.style.position = 'absolute';
-            this.imageLoader.style.top = '0';
-            this.imageLoader.style.left = '0';
-            this.imageLoader.style.width = '1px';
-            this.imageLoader.style.height = '1px';
-            this.imageLoader.style.opacity = `${Number.MIN_VALUE}`;
-            this.imageLoader.style.pointerEvents = 'none';
-            document.body.appendChild(this.imageLoader); // firefox doesn't seem to load images outside of DOM
-            // set image loader event listeners
-            this.imageLoader.addEventListener('load', () => {
-                if (!this.frameWidth || !this.frameHeight) {
-                    this.frameWidth = this.imageLoader.naturalWidth;
-                    this.frameHeight = this.imageLoader.naturalHeight;
-                }
-                if (!this.name) {
-                    this.name = getFileStemFromUrl(this.imageLoader.src);
-                }
-                this.initCanvas();
-                this.loading = false;
-            });
-            this.imageLoader.addEventListener('error', () => {
-                this.loading = false;
-                // assume loading from this source fails
-                this.sources.shift();
-            });
+            //initialize image loaders
+            this.imageLoader = new ImageLoadHelper(this.name, this.sources);
+            this.priorityMaskLoader = new ImageLoadHelper(this.name, this.priorityMaskSources);
             // add contact info container
             this.contactX = Math.round(this.x / 5) * 5;
             this.contactY = Math.round(this.y / 5) * 5;
@@ -352,12 +427,16 @@
                         let child = contactInfos[i];
                         let childX = parseInt((_a = child.getAttribute('contactX')) !== null && _a !== void 0 ? _a : '0');
                         let childY = parseInt((_b = child.getAttribute('contactY')) !== null && _b !== void 0 ? _b : '0');
+                        let thisRight = this.contactX + 35;
+                        let childRight = childX + 35;
+                        let collision = this.contactX <= childRight && this.contactX >= childX || thisRight <= childRight && thisRight >= childX;
                         if (child
-                            && childX >= this.contactX && childX <= this.contactX + 50
-                            && childY === this.contactY) {
+                            && collision
+                            && Math.round(childY) === Math.round(this.contactY)) {
                             checkingCoords = true;
                             this.contactX += 5;
                             this.contactY += 5;
+                            break;
                         }
                     }
                 }
@@ -416,23 +495,15 @@
                 this.contactElement.style.pointerEvents = enabled ? "auto" : "none";
             }
         }
-        tryLoadSource() {
-            if (this.loading)
-                return;
-            if (this.sources.length === 0)
-                return;
-            this.loading = true;
-            let candidateSource = this.sources[0];
-            let displayName = this.name ? this.name + ': ' : '';
-            console.log(`${displayName}trying to load ${candidateSource}`);
-            GM.xmlHttpRequest({
-                method: 'GET',
-                url: candidateSource,
-                responseType: 'blob',
-                onload: (response) => {
-                    this.imageLoader.src = URL.createObjectURL(response.response);
-                }
-            });
+        setPreviewMode(enabled) {
+            var _a;
+            let data = enabled ? this.fullImageData : this.ditheredData;
+            this.canvasElement.width = data.width;
+            this.canvasElement.height = data.height;
+            (_a = this.canvasElement.getContext('2d')) === null || _a === void 0 ? void 0 : _a.putImageData(data, 0, 0);
+        }
+        hideTemplate(enabled) {
+            this.canvasElement.style.opacity = enabled ? "0" : "1";
         }
         getCurrentFrameIndex(currentSeconds) {
             if (!this.looping && this.startTime + this.frameCount * this.frameSpeed < currentSeconds)
@@ -458,31 +529,40 @@
                 }
             }
         }
-        initCanvas() {
-            this.canvasElement.style.position = 'absolute';
-            this.canvasElement.style.top = `${this.y}px`;
-            this.canvasElement.style.left = `${this.x}px`;
-            this.canvasElement.style.width = `${this.frameWidth}px`;
-            this.canvasElement.style.height = `${this.frameHeight}px`;
-            this.canvasElement.style.pointerEvents = 'none';
-            this.canvasElement.style.imageRendering = 'pixelated';
-            this.canvasElement.setAttribute('priority', this.priority.toString());
-            this.insertPriorityElement(this.canvasElement);
+        initCanvasIfNeeded(image) {
+            if (this.needsCanvasInitialization) {
+                if (!this.frameWidth || !this.frameHeight) {
+                    this.frameWidth = image.naturalWidth;
+                    this.frameHeight = image.naturalHeight;
+                }
+                this.canvasElement.style.position = 'absolute';
+                this.canvasElement.style.top = `${this.y}px`;
+                this.canvasElement.style.left = `${this.x}px`;
+                this.canvasElement.style.width = `${this.frameWidth}px`;
+                this.canvasElement.style.height = `${this.frameHeight}px`;
+                this.canvasElement.style.pointerEvents = 'none';
+                this.canvasElement.style.imageRendering = 'pixelated';
+                this.canvasElement.setAttribute('priority', this.priority.toString());
+                this.insertPriorityElement(this.canvasElement);
+                this.needsCanvasInitialization = false;
+            }
         }
         frameStartTime(n = null) {
             return (this.startTime + (n || this.currentFrame || 0) * this.frameSpeed) % this.animationDuration;
         }
-        update(percentage, randomness, currentSeconds) {
+        async update(higherTemplates, percentage, randomness, currentSeconds) {
             var _a;
             // return if the animation is finished
             if (!this.looping && currentSeconds > this.startTime + this.frameSpeed * this.frameCount) {
                 return;
             }
+            let image = this.imageLoader.getImage();
+            let priorityMask = this.priorityMaskLoader.getImage();
             // return if image isn't loaded yet
-            if (!this.imageLoader.complete || !this.imageLoader.src) {
-                this.tryLoadSource();
+            if (!image)
                 return;
-            }
+            // else initialize canvas
+            this.initCanvasIfNeeded(image);
             // return if canvas not initialized (works because last step of canvas initialization is inserting it to DOM)
             if (!this.canvasElement.isConnected) {
                 return;
@@ -498,19 +578,50 @@
             }
             // update canvas if necessary
             if (this.currentFrame !== frameIndex || this.currentPercentage !== percentage || this.currentRandomness !== randomness) {
-                let frameData = extractFrame(this.imageLoader, this.frameWidth, this.frameHeight, frameIndex);
-                if (!frameData)
+                if (!this.frameData || this.frameCount > 1)
+                    this.frameData = extractFrame(image, this.frameWidth, this.frameHeight, frameIndex);
+                if (!this.frameData)
                     return;
-                let ditheredData = ditherData(frameData, randomness, percentage, this.x, this.y, this.frameWidth, this.frameHeight);
-                this.canvasElement.width = ditheredData.width;
-                this.canvasElement.height = ditheredData.height;
-                (_a = this.canvasElement.getContext('2d')) === null || _a === void 0 ? void 0 : _a.putImageData(ditheredData, 0, 0);
+                if (priorityMask) {
+                    if (!this.priorityData || this.frameCount > 1) {
+                        this.priorityData = extractFrame(priorityMask, this.frameWidth, this.frameHeight, frameIndex);
+                    }
+                }
+                let frameDatas = [];
+                for (let i = 0; i < higherTemplates.length; i++) {
+                    let other = higherTemplates[i];
+                    if (this.checkCollision(other) && other.frameData)
+                        frameDatas.push({ imagedata: other.frameData, x: this.x - other.x, y: this.y - other.y });
+                    // the x, y over here are our coords in relation to the other template
+                }
+                frameDatas.push({ imagedata: this.frameData, x: 0, y: 0 });
+                this.fullImageData = frameDatas[frameDatas.length - 1].imagedata;
+                this.ditheredData = await ditherData(frameDatas, this.priorityData, randomness, percentage, this.x, this.y, this.frameWidth, this.frameHeight);
+                this.canvasElement.width = this.ditheredData.width;
+                this.canvasElement.height = this.ditheredData.height;
+                (_a = this.canvasElement.getContext('2d')) === null || _a === void 0 ? void 0 : _a.putImageData(this.ditheredData, 0, 0);
             }
             // update done
             this.currentPercentage = percentage;
             this.currentFrame = frameIndex;
             this.currentRandomness = randomness;
             this.blinking(currentSeconds);
+        }
+        checkCollision(other) {
+            if (!this.frameWidth || !this.frameHeight || !other.frameWidth || !other.frameHeight)
+                return false;
+            let thisRight = this.x + this.frameWidth;
+            let thisBottom = this.y + this.frameHeight;
+            let otherRight = other.x + other.frameWidth;
+            let otherBottom = other.y + other.frameHeight;
+            if (this.x > otherRight || // this template is to the right of the other template
+                thisRight < other.x || // this template is to the left of the other template
+                this.y > otherBottom || // this template is below the other template
+                thisBottom < other.y // this template is above the other template
+            ) {
+                return false;
+            }
+            return true;
         }
         blinking(currentSeconds) {
             // return if no blinking needed
@@ -527,12 +638,12 @@
             }
         }
         destroy() {
-            var _a, _b, _c, _d;
-            (_a = this.imageLoader.parentElement) === null || _a === void 0 ? void 0 : _a.removeChild(this.imageLoader);
-            this.imageLoader = new Image();
-            (_b = this.canvasElement.parentElement) === null || _b === void 0 ? void 0 : _b.removeChild(this.canvasElement);
+            var _a, _b, _c;
+            this.imageLoader.destroy();
+            this.priorityMaskLoader.destroy();
+            (_a = this.canvasElement.parentElement) === null || _a === void 0 ? void 0 : _a.removeChild(this.canvasElement);
             this.canvasElement = document.createElement('canvas');
-            (_d = (_c = this.contactElement) === null || _c === void 0 ? void 0 : _c.parentElement) === null || _d === void 0 ? void 0 : _d.removeChild(this.contactElement);
+            (_c = (_b = this.contactElement) === null || _b === void 0 ? void 0 : _b.parentElement) === null || _c === void 0 ? void 0 : _c.removeChild(this.contactElement);
             this.contactElement = undefined;
         }
         async fakeReload(time) {
@@ -542,11 +653,88 @@
         }
     }
 
+    const context = new AudioContext();
+    class UserscriptAudio {
+        constructor(_src) {
+            this.ready = false;
+            if (_src)
+                this.src = _src;
+        }
+        load() {
+            return new Promise((resolve, reject) => {
+                if (!this.src)
+                    return reject(new Error('Source is not set.'));
+                const error = (errText) => {
+                    return (err) => {
+                        console.error(`failed to load the sound from source`, this.src, ':', err);
+                        reject(new Error(errText));
+                    };
+                };
+                GM.xmlHttpRequest({
+                    method: 'GET',
+                    url: this.src,
+                    responseType: 'arraybuffer',
+                    onload: (response) => {
+                        const errText = 'Failed to decode audio';
+                        try {
+                            context.decodeAudioData(response.response, (buffer) => {
+                                this._buffer = buffer;
+                                this.ready = true;
+                                resolve();
+                            }, error(errText));
+                        }
+                        catch (e) {
+                            error(errText)(e);
+                        }
+                    },
+                    onerror: error('Failed to fetch audio from URL')
+                });
+            });
+        }
+        play() {
+            if (!this.ready || !this._buffer) {
+                throw new Error('Audio not ready. Please load the audio with .load()');
+            }
+            if (this._sound) {
+                try {
+                    this._sound.disconnect(context.destination);
+                }
+                catch (_a) { }
+            }
+            this._sound = context.createBufferSource();
+            this._sound.buffer = this._buffer;
+            this._sound.connect(context.destination);
+            this._sound.start(0);
+        }
+    }
+
+    const NOTIFICATION_SOUND_SETTINGS_KEY = 'notificationSound';
+    const DEFAULT_NOTIFICATION_SOUND_URL = 'https://files.catbox.moe/c9nwlu.mp3';
     class NotificationManager {
         constructor() {
             this.container = document.createElement('div');
             this.container.id = 'osuplaceNotificationContainer';
             document.body.appendChild(this.container);
+            this.getNotificationSound()
+                .then((src) => {
+                this.initNotificationSound(src)
+                    .catch((ex) => {
+                    console.error('failed to init notification sound:', ex);
+                    this.newNotification('notifications manager', 'Failed to load the notifications sound. It will not play.');
+                });
+            });
+        }
+        async getNotificationSound() {
+            return await GM.getValue(NOTIFICATION_SOUND_SETTINGS_KEY, DEFAULT_NOTIFICATION_SOUND_URL);
+        }
+        async setNotificationSound(sound) {
+            await this.initNotificationSound(sound);
+            await GM.setValue(NOTIFICATION_SOUND_SETTINGS_KEY, sound);
+        }
+        async initNotificationSound(src) {
+            const newAudio = new UserscriptAudio(src);
+            await newAudio.load();
+            this.notificationSound = newAudio;
         }
         newNotification(url, message) {
             let div = document.createElement('div');
@@ -562,14 +750,25 @@
             setTimeout(() => {
                 div.classList.add('visible');
             }, 100);
+            if (this.notificationSound) {
+                try {
+                    this.notificationSound.play();
+                }
+                catch (err) {
+                    console.error('failed to play notification audio', err);
+                }
+            }
         }
     }
 
+    const WS_FORCE_CLOSE_CODE = 3006;
     class TemplateManager {
         constructor(canvasElements, startingUrl) {
             this.templatesToLoad = MAX_TEMPLATES;
             this.alreadyLoaded = new Array();
-            this.websockets = new Array();
+            this.websockets = new Map();
+            this.intervals = new Map();
+            this.seenNotifications = new Array();
             this.notificationTypes = new Map();
             this.enabledNotifications = new Array();
             this.whitelist = new Array();
@@ -583,7 +782,9 @@
             this.lastCacheBust = this.getCacheBustString();
             this.notificationManager = new NotificationManager();
             this.notificationSent = false;
-            console.log('TemplateManager constructor ', canvasElements);
+            this.contactInfoEnabled = false;
+            this.showTopLevelNotification = true;
+            console.log('TemplateManager constructor ', canvasElements, window.location);
             this.canvasElements = canvasElements;
             this.selectedCanvas = canvasElements[0];
             this.selectBestCanvas();
@@ -597,7 +798,7 @@
             style.innerHTML = CONTACT_INFO_CSS;
             this.selectedCanvas.parentElement.appendChild(style);
             let globalStyle = document.createElement("style");
-            globalStyle.innerHTML = GLOBAL_CANVAS_CSS;
+            globalStyle.innerHTML = GLOBAL_CSS;
             document.body.appendChild(globalStyle);
             this.canvasObserver = new MutationObserver(() => {
                 let css = getComputedStyle(this.selectedCanvas);
@@ -612,6 +813,10 @@
                 }
             });
             this.canvasObserver.observe(this.selectedCanvas, { attributes: true });
+            setInterval(() => {
+                const now = Math.floor(+new Date() / 1000);
+                this.seenNotifications = this.seenNotifications.filter((d) => d && ((d.seenAt - now) < 10));
+            }, 60 * 1000);
         }
         selectBestCanvas() {
             var _a, _b, _c;
@@ -634,6 +839,7 @@
                 }
                 for (let i = 0; i < this.templateConstructors.length; i++) {
                     this.templates.push(this.templateConstructors[i](this.selectedCanvas));
+                    this.sortTemplates();
                 }
                 (_b = this.canvasObserver) === null || _b === void 0 ? void 0 : _b.disconnect();
                 (_c = this.canvasObserver) === null || _c === void 0 ? void 0 : _c.observe(this.selectedCanvas, { attributes: true });
@@ -687,7 +893,10 @@
                             if (this.templates.length < this.templatesToLoad) {
                                 let constructor = (a) => new Template(json.templates[i], json.contact || json.contactInfo || lastContact, a, minPriority + this.templates.length);
                                 this.templateConstructors.push(constructor);
-                                this.templates.push(constructor(this.selectedCanvas));
+                                let newTemplate = constructor(this.selectedCanvas);
+                                this.templates.push(newTemplate);
+                                newTemplate.setContactInfoDisplay(this.contactInfoEnabled);
+                                this.sortTemplates();
                             }
                         }
                     }
@@ -695,91 +904,199 @@
                     if (json.notifications) {
                         this.setupNotifications(json.notifications, url == this.startingUrl);
                     }
-                }
+                },
+                onerror: console.error
             });
         }
-        setupNotifications(serverUrl, isTopLevelTemplate) {
-            console.log('attempting to set up notification server ' + serverUrl);
-            // get topics
-            let domain = new URL(serverUrl).hostname.replace('broadcaster.', '');
-            fetch(`${serverUrl}/topics`)
-                .then((response) => {
-                if (!response.ok) {
-                    console.error(`error getting ${serverUrl}/topics, trying again in 10s...`);
-                    setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
-                    return false;
-                }
-                return response.json();
-            })
-                .then(async (data) => {
-                if (data == false)
-                    return;
-                let topics = [];
-                data.forEach((topicFromApi) => {
-                    if (!topicFromApi.id || !topicFromApi.description) {
-                        console.error('Invalid topic: ' + topicFromApi);
+        sortTemplates() {
+            this.templates.sort((a, b) => a.priority - b.priority);
+        }
+        setupNotifications(serverUrl, isTopLevelTemplate, doPoll = false) {
+            console.log('attempting to set up notification server ' + serverUrl, doPoll ? "polling" : "websocket");
+            // check if we're not already connected
+            let wsUrl = new URL('/listen', serverUrl);
+            wsUrl.protocol = wsUrl.protocol == 'https:' ? 'wss:' : 'ws:';
+            for (const socket of this.websockets.values()) {
+                if (socket.url == wsUrl.toString()) {
+                    if (socket.readyState != socket.CLOSING && socket.readyState != socket.CLOSED) {
+                        console.log(`we are already connected to ${wsUrl}, skipping!`);
                         return;
                     }
-                    let topic = topicFromApi;
-                    if (isTopLevelTemplate) {
-                        topic.forced = true;
-                        removeItem(this.enabledNotifications, `${domain}??${topic.id}`);
-                        this.enabledNotifications.push(`${domain}??${topic.id}`);
-                    }
-                    topics.push(topic);
-                });
-                this.notificationTypes.set(domain, topics);
-                if (isTopLevelTemplate) {
-                    let enabledKey = `${window.location.host}_notificationsEnabled`;
-                    await GM.setValue(enabledKey, JSON.stringify(this.enabledNotifications));
-                    this.notificationManager.newNotification("template manager", `You were automatically set to recieve notifications from ${domain} as it's from your address-bar template`);
                 }
-                // actually connecting to the websocket now
-                let wsUrl = new URL('/listen', serverUrl);
-                wsUrl.protocol = wsUrl.protocol == 'https:' ? 'wss:' : 'ws:';
-                let ws = new WebSocket(wsUrl);
-                ws.addEventListener('open', (_) => {
-                    console.log(`successfully connected to websocket for ${serverUrl}`);
-                    this.websockets.push(ws);
-                });
-                ws.addEventListener('message', async (event) => {
-                    // https://github.com/osuplace/broadcaster/blob/main/API.md
-                    let data = JSON.parse(await event.data);
-                    if (data.e == 1) {
-                        if (!data.t || !data.c) {
-                            console.error(`Malformed event from ${serverUrl}: ${data}`);
-                        }
-                        let topic = topics.find(t => t.id == data.t); // FIXME: if we add dynamically updating topics, this will use the old topic list instead of the up to date one
-                        if (!topic)
+            }
+            // get topics
+            let domain = new URL(serverUrl).hostname.replace(/[\.\-_]?broadcaster/, '');
+            if (domain[0] === '.')
+                domain = domain.substring(1);
+            // do some cache busting
+            let _url = new URL(serverUrl + "/topics");
+            this.lastCacheBust = this.getCacheBustString();
+            _url.searchParams.append("date", this.lastCacheBust);
+            GM.xmlHttpRequest({
+                method: 'GET',
+                url: _url.href,
+                responseType: 'text',
+                onload: async (response) => {
+                    if (response.status !== 200) {
+                        console.error(`error getting ${serverUrl}/topics, trying again in 10s...`);
+                        setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
+                        return false;
+                    }
+                    let data = response.response;
+                    try {
+                        data = JSON.parse(data);
+                    }
+                    catch (ex) {
+                        console.error(`error parsing ${serverUrl} topics: ${ex}, trying again in 10s...`);
+                        setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
+                        return false;
+                    }
+                    if (data == false)
+                        return;
+                    let topics = [];
+                    data.forEach((topicFromApi) => {
+                        if (!topicFromApi.id || !topicFromApi.description) {
+                            console.error('Invalid topic: ' + topicFromApi);
                             return;
-                        if (this.enabledNotifications.includes(`${domain}??${data.t}`) || topic.forced) {
-                            this.notificationManager.newNotification(domain, data.c);
                         }
+                        let topic = topicFromApi;
+                        if (isTopLevelTemplate) {
+                            topic.forced = true;
+                            removeItem(this.enabledNotifications, `${domain}??${topic.id}`);
+                            this.enabledNotifications.push(`${domain}??${topic.id}`);
+                        }
+                        topics.push(topic);
+                    });
+                    this.notificationTypes.set(domain, topics);
+                    if (isTopLevelTemplate) {
+                        let enabledKey = `${window.location.host}_notificationsEnabled`;
+                        await GM.setValue(enabledKey, JSON.stringify(this.enabledNotifications));
+                        if (this.showTopLevelNotification) {
+                            this.notificationManager.newNotification("template manager", `You were automatically set to recieve notifications from ${domain} as it's from your address-bar template`);
+                            this.showTopLevelNotification = false;
+                        }
+                    }
+                    const handleNotificationEvent = (data) => {
+                        // https://github.com/osuplace/broadcaster/blob/main/API.md
+                        if (data.e == 1) {
+                            if (!data.t || !data.c) {
+                                console.error(`Malformed event from ${serverUrl}: ${data}`);
+                            }
+                            let topic = topics.find(t => t.id == data.t); // FIXME: if we add dynamically updating topics, this will use the old topic list instead of the up to date one
+                            if (!topic)
+                                return;
+                            if (data.i) {
+                                const id = `${domain}:${data.i}`;
+                                if (this.seenNotifications.some((v) => v.id == id))
+                                    return;
+                                this.seenNotifications.push({
+                                    id,
+                                    seenAt: Math.floor(+new Date() / 1000)
+                                });
+                            }
+                            if (this.enabledNotifications.includes(`${domain}??${data.t}`) || topic.forced) {
+                                this.notificationManager.newNotification(domain, data.c);
+                            }
+                        }
+                        else {
+                            console.log(`Received unknown event from ${serverUrl}: ${data}`);
+                        }
+                    };
+                    if (doPoll) {
+                        let timer = setInterval(() => {
+                            if (!this.enabledNotifications.some((en) => en.startsWith(domain)))
+                                return;
+                            let pollUrl = new URL(serverUrl + "/listen-poll");
+                            pollUrl.searchParams.append("date", (+new Date()).toString());
+                            GM.xmlHttpRequest({
+                                method: 'GET',
+                                url: pollUrl.href,
+                                responseType: 'text',
+                                onload: async (response) => {
+                                    if (response.status === 404) {
+                                        console.error(`${serverUrl} does not have polling support, trying again with websocket in 30s...`);
+                                        setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 30000);
+                                        clearInterval(timer);
+                                        return false;
+                                    }
+                                    if (response.status !== 200) {
+                                        console.error(`error getting ${serverUrl}/listen-poll, trying again in 10s...`);
+                                        setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
+                                        clearInterval(timer);
+                                        return false;
+                                    }
+                                    let data = response.response;
+                                    try {
+                                        data = JSON.parse(data);
+                                        if (!Array.isArray(data))
+                                            throw new Error();
+                                    }
+                                    catch (ex) {
+                                        console.error(`error parsing ${serverUrl} listen (poll): ${ex}, trying again in 10s...`);
+                                        setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
+                                        clearInterval(timer);
+                                        return false;
+                                    }
+                                    for (const event of data)
+                                        handleNotificationEvent(event);
+                                },
+                                onerror: (err) => {
+                                    console.error(`error getting ${serverUrl}/listen-poll, trying again in 10s...`, err);
+                                    setTimeout(() => { this.setupNotifications(serverUrl, isTopLevelTemplate); }, 10000);
+                                    clearInterval(timer);
+                                }
+                            });
+                        }, 10 * 1000);
+                        if (this.intervals.has(domain))
+                            clearInterval(this.intervals.get(domain));
+                        this.intervals.set(domain, timer);
                     }
                     else {
-                        console.log(`Received unknown event from ${serverUrl}: ${data}`);
+                        // actually connecting to the websocket now
+                        let ws = new WebSocket(wsUrl);
+                        ws.addEventListener('open', (_) => {
+                            var _a;
+                            console.log(`successfully connected to websocket for ${serverUrl}`);
+                            if (this.websockets.has(domain))
+                                (_a = this.websockets.get(domain)) === null || _a === void 0 ? void 0 : _a.close(WS_FORCE_CLOSE_CODE);
+                            this.websockets.set(domain, ws);
+                        });
+                        ws.addEventListener('message', async (event) => {
+                            let data = JSON.parse(await event.data);
+                            handleNotificationEvent(data);
+                        });
+                        ws.addEventListener('close', (event) => {
+                            if (event.code === WS_FORCE_CLOSE_CODE)
+                                return;
+                            console.log(`websocket on ${ws.url} closing!`);
+                            this.websockets.delete(domain);
+                            setTimeout(() => {
+                                this.setupNotifications(serverUrl, isTopLevelTemplate);
+                            }, 1000 * 30);
+                        });
+                        ws.addEventListener('error', (_) => {
+                            console.log(`websocket error on ${ws.url}, closing!`);
+                            ws.close();
+                            console.error(`failed to create a websocket connection to ${serverUrl}, trying polling...`);
+                            setTimeout(() => {
+                                this.setupNotifications(serverUrl, isTopLevelTemplate, true);
+                            }, 1000 * 1);
+                        });
                     }
-                });
-                ws.addEventListener('close', (_) => {
-                    removeItem(this.websockets, ws);
-                    setTimeout(() => {
-                        this.setupNotifications(serverUrl, isTopLevelTemplate);
-                    }, 1000 * 60);
-                });
-                ws.addEventListener('error', (_) => {
-                    ws.close();
-                });
-            }).catch((error) => {
-                console.error(`Couldn\'t get topics from ${serverUrl}: ${error}`);
+                },
+                onerror: (error) => {
+                    console.error(`Couldn\'t get topics from ${serverUrl}: ${error}`);
+                }
             });
         }
         canReload() {
             return this.lastCacheBust !== this.getCacheBustString();
         }
         initOrReloadTemplates(forced = false, contactInfo = null) {
-            var _a, _b;
-            if (contactInfo)
-                this.setContactInfoDisplay(contactInfo);
+            var _a;
+            if (contactInfo !== null)
+                this.contactInfoEnabled = contactInfo;
+            this.setContactInfoDisplay(this.contactInfoEnabled);
             if (!this.canReload() && !forced) {
                 // fake a reload
                 for (let i = 0; i < this.templates.length; i++) {
@@ -793,11 +1110,16 @@
             while (this.templates.length) {
                 (_a = this.templates.shift()) === null || _a === void 0 ? void 0 : _a.destroy();
             }
-            while (this.websockets.length) {
-                (_b = this.websockets.shift()) === null || _b === void 0 ? void 0 : _b.close();
+            for (const ws of this.websockets.values()) {
+                console.log('initOrReloadTemplates is closing connection ' + ws.url);
+                ws === null || ws === void 0 ? void 0 : ws.close(WS_FORCE_CLOSE_CODE);
+            }
+            for (const interval of this.intervals.values()) {
+                clearInterval(interval);
             }
             this.templates = [];
-            this.websockets = [];
+            this.websockets.clear();
+            this.intervals.clear();
             this.alreadyLoaded = [];
             this.whitelist = [];
             this.blacklist = [];
@@ -823,8 +1145,14 @@
         update() {
             this.selectBestCanvas();
             let cs = this.currentSeconds();
-            for (let i = 0; i < this.templates.length; i++)
-                this.templates[i].update(this.percentage, this.randomness, cs);
+            for (let i = 0; i < this.templates.length; i++) {
+                try {
+                    this.templates[i].update(this.templates.slice(0, i), this.percentage, this.randomness, cs).then();
+                }
+                catch (e) {
+                    console.log(`failed to update template ${this.templates[i].name}`);
+                }
+            }
             if (this.templates.length < this.templatesToLoad) {
                 for (let i = 0; i < this.whitelist.length; i++) {
                     // yes this calls all whitelist all the time but the load will cancel if already loaded
@@ -836,6 +1164,16 @@
         setContactInfoDisplay(enabled) {
             for (let i = 0; i < this.templates.length; i++) {
                 this.templates[i].setContactInfoDisplay(enabled);
+            }
+        }
+        setPreviewMode(enabled) {
+            for (let i = 0; i < this.templates.length; i++) {
+                this.templates[i].setPreviewMode(enabled);
+            }
+        }
+        hideTemplate(enabled) {
+            for (let i = 0; i < this.templates.length; i++) {
+                this.templates[i].hideTemplate(enabled);
             }
         }
     }
@@ -859,7 +1197,7 @@
         textInput.placeholder = placeholder;
         textInput.className = "settingsTextInput";
         let button = createButton(buttonText, () => {
-            callback(textInput.value);
+            callback(textInput.value, textInput);
         });
         div.appendChild(textInput);
         div.appendChild(button);
@@ -914,7 +1252,9 @@
             this.templateLinksWrapper = document.createElement("div");
             this.notificationsWrapper = document.createElement("div");
             this.reloadTemplatesWhenClosed = false;
-            this.contactInfoDisabled = false;
+            this.contactInfoEnabled = false;
+            this.previewModeEnabled = false;
+            this.hideTemplate = false;
             this.templateLinksWrapper.className = "settingsWrapper";
             this.templateLinksWrapper.id = "templateLinksWrapper";
             this.notificationsWrapper.className = "settingsWrapper";
@@ -922,25 +1262,11 @@
             document.body.appendChild(this.overlay);
             this.overlay.id = "settingsOverlay";
             this.overlay.style.opacity = "0";
-            this.overlay.onclick = (ev) => {
-                if (ev.target === ev.currentTarget)
-                    this.close();
-            };
-            window.addEventListener("keydown", (ev) => {
-                if (ev.key === "Escape") {
-                    this.close();
-                }
-            });
-            this.overlay.addEventListener("wheel", (ev) => {
-                ev.preventDefault();
-                var direction = (ev.deltaY > 0) ? 1 : -1;
-                this.overlay.scrollTop += direction * 100;
-            });
             let div = document.createElement('div');
             div.className = "settingsWrapper";
-            div.appendChild(createLabel(".json Template settings"));
+            div.appendChild(createLabel(".json Template settings - v" + GM.info.script.version));
             div.appendChild(document.createElement('br'));
-            div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates(false, this.contactInfoDisabled)));
+            div.appendChild(createButton("Reload the template", () => manager.initOrReloadTemplates(false, this.contactInfoEnabled)));
             div.appendChild(document.createElement('br'));
             div.appendChild(createSlider("Templates to load", "4", (n) => {
                 manager.templatesToLoad = (n + 1) * MAX_TEMPLATES / 5;
@@ -956,17 +1282,61 @@
             }));
             div.appendChild(document.createElement('br'));
             div.appendChild(createSlider("Dither amount", "1", (n) => {
+                var _a;
                 manager.percentage = 1 / (n / 10 + 1);
+                if (this.previewModeEnabled) {
+                    // disable 'preview template in full', because changing percentage
+                    // overrides the template rendering anyway
+                    this.previewModeEnabled = false;
+                    const previewModeInput = (_a = this.previewModeCheckbox) === null || _a === void 0 ? void 0 : _a.children[0];
+                    if (previewModeInput)
+                        previewModeInput.checked = false;
+                }
             }));
             div.appendChild(document.createElement('br'));
-            div.appendChild(createBoldCheckbox('', "Show contact info besides templates", false, (a) => {
+            div.appendChild(createBoldCheckbox('', "Show contact info besides templates", this.contactInfoEnabled, (a) => {
                 manager.setContactInfoDisplay(a);
-                this.contactInfoDisabled = a;
+                this.contactInfoEnabled = a;
             }));
+            this.previewModeCheckbox = div.appendChild(createBoldCheckbox('', "Preview template in full", this.previewModeEnabled, (a) => {
+                manager.setPreviewMode(a);
+                this.previewModeEnabled = a;
+            }));
+            div.appendChild(createBoldCheckbox('', "Hide template", this.hideTemplate, (a) => {
+                manager.hideTemplate(a);
+                this.hideTemplate = a;
+            }));
+            this.populateSoundOptions(div);
             div.appendChild(document.createElement('br'));
-            this.overlay.appendChild(div);
-            this.overlay.appendChild(this.templateLinksWrapper);
-            this.overlay.appendChild(this.notificationsWrapper);
+            let clickHandler = document.createElement('div');
+            clickHandler.style.width = '100vw';
+            clickHandler.style.height = '100vh';
+            clickHandler.style.position = 'absolute';
+            clickHandler.style.left = '-0.1px';
+            clickHandler.style.right = '-0.1px';
+            clickHandler.style.overflowY = 'auto';
+            clickHandler.addEventListener("wheel", (ev) => {
+                ev.preventDefault();
+                var direction = (ev.deltaY > 0) ? 1 : -1;
+                clickHandler.scrollTop += direction * 100;
+            });
+            clickHandler.onclick = (ev) => {
+                if (ev.target === ev.currentTarget)
+                    this.close();
+            };
+            window.addEventListener("keydown", (ev) => {
+                if (ev.key === "Escape") {
+                    this.close();
+                }
+            });
+            this.overlay.attachShadow({ mode: 'open' });
+            let globalStyle = document.createElement("style");
+            globalStyle.innerHTML = SETTINGS_CSS;
+            this.overlay.shadowRoot.appendChild(globalStyle);
+            this.overlay.shadowRoot.appendChild(clickHandler);
+            clickHandler.appendChild(div);
+            clickHandler.appendChild(this.templateLinksWrapper);
+            clickHandler.appendChild(this.notificationsWrapper);
         }
         open() {
             this.overlay.style.opacity = "1";
@@ -977,7 +1347,7 @@
             this.overlay.style.opacity = "0";
             this.overlay.style.pointerEvents = "none";
             if (this.reloadTemplatesWhenClosed) {
-                this.manager.initOrReloadTemplates(true, this.contactInfoDisabled);
+                this.manager.initOrReloadTemplates(true, this.contactInfoEnabled);
                 this.reloadTemplatesWhenClosed = false;
             }
         }
@@ -996,6 +1366,36 @@
         populateAll() {
             this.populateTemplateLinks();
             this.populateNotifications();
+        }
+        populateSoundOptions(div) {
+            const audioDiv = document.createElement('div');
+            div.appendChild(document.createElement('br'));
+            div.appendChild(audioDiv);
+            this.manager.notificationManager.getNotificationSound()
+                .then((value) => {
+                let linkLabel = document.createElement('label');
+                let updateLinkLabel = (url) => {
+                    linkLabel.innerHTML = `Current sound: <a target="_blank" rel="noopener noreferrer" href="${url}">${url}</a>`;
+                };
+                updateLinkLabel(value);
+                audioDiv.appendChild(createLabel('Set new notification sound:'));
+                audioDiv.appendChild(document.createElement('br'));
+                audioDiv.appendChild(linkLabel);
+                audioDiv.appendChild(createTextInput('Apply', 'Sound URL', (newSound, input) => {
+                    if (!newSound.trim().length) {
+                        return;
+                    }
+                    this.manager.notificationManager.setNotificationSound(newSound)
+                        .then(() => {
+                        this.manager.notificationManager.newNotification('settings', 'Applied new sound!');
+                        input.value = '';
+                        updateLinkLabel(newSound);
+                    })
+                        .catch((err) => {
+                        this.manager.notificationManager.newNotification('settings', 'Failed to apply new sound:\n' + err);
+                    });
+                }));
+            });
         }
         populateTemplateLinks() {
             while (this.templateLinksWrapper.children.length) {
@@ -1016,6 +1416,7 @@
                 this.templateLinksWrapper.appendChild(templateAdder);
                 if (templates.length > 0) {
                     this.templateLinksWrapper.appendChild(createLabel("Click to remove template from always loading"));
+                    this.templateLinksWrapper.appendChild(document.createElement('br'));
                 }
                 for (let i = 0; i < templates.length; i++) {
                     let button = createButton(templates[i], async () => {
@@ -1141,6 +1542,21 @@
                 setPosition(ev.clientX, ev.clientY);
             }
         });
+        iconElement.addEventListener('touchstart', (ev) => {
+            clicked = true;
+        });
+        window.addEventListener('touchend', (ev) => {
+            clicked = false;
+            dragged = false;
+        });
+        window.addEventListener('touchmove', (ev) => {
+            if (ev.touches.length === 1) {
+                if (iconElement !== document.elementFromPoint(ev.touches[0].pageX, ev.touches[0].pageY) && clicked)
+                    dragged = true;
+                if (dragged)
+                    setPosition(ev.touches[0].clientX, ev.touches[0].clientY);
+            }
+        });
     }
 
     let jsontemplate;
@@ -1153,9 +1569,13 @@
         GM.setValue('jsontemplate', jsontemplate);
     }
     async function canvasWindow() {
+        while (document.readyState !== 'complete') {
+            console.log("Template manager sleeping for 1 second because document isn't ready yet.");
+            await sleep(1000);
+        }
         console.log("canvas code for", window.location.href);
         let sleep$1 = 0;
-        while (!canvasElements) {
+        while (canvasElements === undefined || canvasElements.length === 0) {
             if (await GM.getValue('canvasFound', false) && !windowIsEmbedded()) {
                 console.log('canvas found by iframe');
                 return;
@@ -1179,12 +1599,16 @@
             sleep$1++;
         }
     }
-    function runCanvas(jsontemplate, canvasElements) {
+    async function runCanvas(jsontemplate, canvasElements) {
         let manager = new TemplateManager(canvasElements, jsontemplate);
         init(manager);
         window.setInterval(() => {
             manager.update();
         }, UPDATE_PERIOD_MILLIS);
+        window.setInterval(() => {
+            console.log("Reloading template...");
+            manager.initOrReloadTemplates(false, null);
+        }, TEMPLATE_RELOAD_INTERVAL);
         GM.setValue('jsontemplate', '');
     }
     console.log(`running templating script in ${window.location.href}`);

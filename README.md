@@ -1,3 +1,9 @@
+<h1>DO NOT USE THIS TEMPLATE MANAGER.</h1>
+<h2>Use <a href="https://github.com/osuplace/templateManager">the parent template manager</a></h2>
+
+
+----------
+
 # Template Manager
 ### - by r/osuplace 
 

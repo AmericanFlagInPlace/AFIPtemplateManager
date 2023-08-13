@@ -775,7 +775,6 @@
             this.blacklist = new Array();
             this.templateConstructors = new Array();
             this.templates = new Array();
-            this.responseDiffs = new Array();
             this.canvasElements = [];
             this.randomness = Math.random();
             this.percentage = 1;
@@ -864,12 +863,6 @@
                 method: 'GET',
                 url: _url.href,
                 onload: (response) => {
-                    // use this request to callibrate the latency to general internet requests
-                    let responseMatch = response.responseHeaders.match(/date:(.*)\r/i);
-                    if (responseMatch) {
-                        let responseTime = Date.parse(responseMatch[1]);
-                        this.responseDiffs.push(responseTime - Date.now());
-                    }
                     // parse the response
                     let json = JSON.parse(response.responseText);
                     // read blacklist. These will never be loaded
@@ -1139,8 +1132,7 @@
             });
         }
         currentSeconds() {
-            let averageDiff = this.responseDiffs.reduce((a, b) => a + b, 0) / (this.responseDiffs.length);
-            return (Date.now() + averageDiff) / 1000;
+            return Date.now() / 1000;
         }
         update() {
             this.selectBestCanvas();
